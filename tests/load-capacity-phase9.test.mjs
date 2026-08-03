@@ -277,7 +277,7 @@ function validEnvironment() {
     LOAD_API_RELEASE: "api-test-release",
     LOAD_GIT_COMMIT: "0123456789abcdef0123456789abcdef01234567",
     LOAD_WORKER_RELEASE: "worker-test-release",
-    LOAD_MIGRATION_HEAD: "202607290001",
+    LOAD_MIGRATION_HEAD: "202608030003",
     LOAD_DB_TIER: "test-tier",
     LOAD_API_TOPOLOGY: "2 replicas",
     LOAD_WORKER_TOPOLOGY: "2 replicas",

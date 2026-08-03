@@ -55,6 +55,38 @@ function loadTs(relativePath, requireModule) {
   return mod.exports;
 }
 
+test("room creation retries keep one idempotency key until the request succeeds", () => {
+  const { createMemoryRoomIdempotencyCoordinator } = loadStandaloneTs(
+    "mobile/src/services/memoryRoomCreateIdempotency.ts"
+  );
+  let sequence = 0;
+  const coordinator = createMemoryRoomIdempotencyCoordinator({
+    capacity: 2,
+    createKey: () => `request-${++sequence}`
+  });
+  const payload = {
+    occasion: "Dinner",
+    participantUsernames: ["friend"],
+    restaurantName: "Table Memory"
+  };
+
+  const firstAttempt = coordinator.begin(payload);
+  const retryAfterLostResponse = coordinator.begin({ ...payload });
+  assert.equal(retryAfterLostResponse.idempotencyKey, firstAttempt.idempotencyKey);
+  assert.equal(sequence, 1);
+
+  coordinator.complete(firstAttempt);
+  const intentionalSecondRoom = coordinator.begin({ ...payload });
+  assert.notEqual(intentionalSecondRoom.idempotencyKey, firstAttempt.idempotencyKey);
+  assert.equal(sequence, 2);
+
+  const otherRoom = coordinator.begin({ ...payload, occasion: "Lunch" });
+  assert.equal(otherRoom.idempotencyKey, "request-3");
+  coordinator.begin({ ...payload, occasion: "Breakfast" });
+  const evictedRetry = coordinator.begin({ ...payload });
+  assert.notEqual(evictedRetry.idempotencyKey, intentionalSecondRoom.idempotencyKey);
+});
+
 test("cursor sync converges through more than 800 changes and commits every page cursor", async () => {
   const { runCursorSync } = loadStandaloneTs("mobile/src/services/memorySyncRunner.ts");
   const pages = new Map([
@@ -525,7 +557,7 @@ test("read state is durable and monotonic, transient auth preserves replicas, an
   assert.match(offline, /storedReadMs[\s\S]*storedReadMs > requestedReadMs/);
   assert.match(
     offline,
-    /unreadCount: Math\.min\(\s*summary\.unreadCount,\s*Math\.max\(0, remainingUnreadCount\)/
+    /unreadChatCount = Math\.min\([\s\S]*summary\.unreadChatCount \?\? summary\.unreadCount[\s\S]*unreadCount: Math\.max\(0, summary\.unreadCount - cleared\)/
   );
   assert.match(
     hooks,

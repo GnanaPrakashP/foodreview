@@ -10,7 +10,8 @@
       "environment": "development",
       "env": {
         "EXPO_PUBLIC_APP_ENVIRONMENT": "development",
-        "EXPO_PUBLIC_RELEASE_CHANNEL": "development"
+        "EXPO_PUBLIC_RELEASE_CHANNEL": "development",
+        "EXPO_PUBLIC_REQUIRE_PUSH_REGISTRATION": "1"
       }
     },
     "ios-simulator": {
@@ -30,7 +31,8 @@
       "env": {
         "EXPO_PUBLIC_APP_ENVIRONMENT": "preview",
         "EXPO_PUBLIC_HOME_LIST_ENGINE": "flashlist",
-        "EXPO_PUBLIC_RELEASE_CHANNEL": "preview"
+        "EXPO_PUBLIC_RELEASE_CHANNEL": "preview",
+        "EXPO_PUBLIC_REQUIRE_PUSH_REGISTRATION": "1"
       },
       "android": {
         "buildType": "apk",
@@ -47,6 +49,7 @@
       "env": {
         "EXPO_PUBLIC_APP_ENVIRONMENT": "production",
         "EXPO_PUBLIC_RELEASE_CHANNEL": "production",
+        "EXPO_PUBLIC_REQUIRE_PUSH_REGISTRATION": "1",
         "EX_DEV_CLIENT_NETWORK_INSPECTOR": "false"
       },
       "android": {

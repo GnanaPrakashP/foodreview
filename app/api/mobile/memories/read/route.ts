@@ -125,7 +125,7 @@ export async function GET(req: NextRequest) {
 
   try {
     if (action === "rooms") {
-      const { data, error } = await supabase.rpc("shared_memory_room_summaries_v3", {
+      const { data, error } = await supabase.rpc("shared_memory_room_summaries_v4", {
         p_before_timeline_date: cursor?.createdAt.slice(0, 10) ?? null,
         p_before_room_id: cursor?.id ?? null,
         p_limit: limit + 1,

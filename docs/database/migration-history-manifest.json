@@ -3030,7 +3030,117 @@
       "sizeBytes": 9248,
       "sourceRoot": "supabase/migrations",
       "version": "202608020002"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "current_profile_name",
+        "respond_to_shared_memory_invite",
+        "shared_memory_invites",
+        "shared_memory_members",
+        "shared_memory_room_has_blocked_relationship",
+        "uid"
+      ],
+      "description": "fix_memory_invite_join_conflict",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202608020003_fix_memory_invite_join_conflict.sql",
+      "objectCategories": [
+        "auth",
+        "constraints",
+        "functions",
+        "memory",
+        "social"
+      ],
+      "sha256": "bbc5ec2023b16951a0d3207b701b194273f177fb215809e552880416bbb84a06",
+      "sizeBytes": 3199,
+      "sourceRoot": "supabase/migrations",
+      "version": "202608020003"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "can_read_shared_memory",
+        "current_profile_name",
+        "mark_shared_memory_activity_read_v1",
+        "shared_memory_dishes",
+        "shared_memory_members",
+        "shared_memory_messages",
+        "shared_memory_photos",
+        "shared_memory_reads",
+        "shared_memory_room_has_blocked_relationship",
+        "shared_memory_room_summaries_v4",
+        "shared_memory_rooms",
+        "shared_memory_stops"
+      ],
+      "description": "table_memory_activity_unread",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202608030001_table_memory_activity_unread.sql",
+      "objectCategories": [
+        "functions",
+        "indexes",
+        "memory",
+        "profiles",
+        "social"
+      ],
+      "sha256": "70a61557e685838a312ad82cb51d8d96af1b6ae7ad6d1e18d83e70f0e6179257",
+      "sizeBytes": 9254,
+      "sourceRoot": "supabase/migrations",
+      "version": "202608030001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "enqueue_table_memory_activity_v1",
+        "notification_settings",
+        "notifications",
+        "profiles",
+        "push_delivery_jobs",
+        "push_tokens",
+        "shared_memory_dishes",
+        "shared_memory_members",
+        "shared_memory_messages",
+        "shared_memory_photos",
+        "shared_memory_room_has_blocked_relationship"
+      ],
+      "description": "table_memory_notification_outbox",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202608030002_table_memory_notification_outbox.sql",
+      "objectCategories": [
+        "constraints",
+        "functions",
+        "indexes",
+        "memory",
+        "notifications",
+        "profiles",
+        "social",
+        "triggers"
+      ],
+      "sha256": "f790370ec5a5c281e63a0f0d5f4f079834d77a31af6168eca1dc7abc45cee27c",
+      "sizeBytes": 5963,
+      "sourceRoot": "supabase/migrations",
+      "version": "202608030002"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "set_shared_memory_dish_rating_v2",
+        "shared_memory_dish_ratings",
+        "shared_memory_dishes",
+        "shared_memory_members"
+      ],
+      "description": "table_memory_entity_mutations",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202608030003_table_memory_entity_mutations.sql",
+      "objectCategories": [
+        "functions",
+        "indexes",
+        "memory"
+      ],
+      "sha256": "6f3cf63f1c059fec5b4b8a610bb552a6a948ffc946f41cd31d0e4ddfda800917",
+      "sizeBytes": 3001,
+      "sourceRoot": "supabase/migrations",
+      "version": "202608030003"
     }
   ],
-  "currentCanonicalMigrations": 92
+  "currentCanonicalMigrations": 96
 }

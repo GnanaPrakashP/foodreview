@@ -1332,3 +1332,183 @@ security checks pass 39/39, both typechecks and zero-error lint pass, and
 `git diff --check` is clean. The full dirty-branch suite remains 1,803/1,813
 with the same ten unrelated Review, Profile, Explore and post-media contract
 failures.
+
+### Two-device acceptance audit and room-create/join retry follow-up
+
+The 2026-08-02 Table Memory two-device acceptance audit remains within Phase 9
+and does not advance a release gate. The run resumed with two distinct
+authenticated accounts on two connected Android 16 Motorola phones in one
+synthetic shared room. Physical PASS results cover create/invite/join after the
+fix below, two-member convergence, normal/rapid/simultaneous text, two-way
+replies, exact-chat and other-tab unread/read behavior, in-app recovery while
+elsewhere/backgrounded/terminated, bidirectional images, dishes, independent
+rating changes/aggregates, place addition, temporary network disconnect/text
+retry, automatic no-refresh convergence for successful supported actions, and
+force-close restoration on both accounts.
+
+The audit found that a normal room-create retry generated a new generic POST
+idempotency key. A bounded creation coordinator now retains one key per
+normalized pending payload until a successful response; an identical
+same-process retry reaches the existing server idempotency record, while a
+later intentional identical room gets a new key. The change is client-only and
+does not alter authentication, RLS, membership, Storage, media, Realtime,
+cursor, logging or UI contracts. Process-death persistence remains a known
+risk.
+
+The initial Phone B join returned a generic 500. The deployed
+`respond_to_shared_memory_invite` table-return variable `room_id` was ambiguous
+with `ON CONFLICT (room_id, user_name)`. Migration
+`202608020003_fix_memory_invite_join_conflict.sql` targets the existing named
+membership constraint without changing the RPC's authorization or lifecycle
+semantics. It was deployed, the invitation-lifecycle regression passes 7/7,
+and the same physical invite then joined once with live membership convergence
+and later two-phone restart persistence.
+
+Earlier room-create verification: durable-replica checks 12/12, Memory hardening
+116/116, exact Phase 1/2 security/media checks 40/40, both typechecks, zero-error
+lint (85 existing warnings), Next Turbopack production build and
+`git diff --check` pass. The complete repository suite is 1,849/1,859 with the
+same ten unrelated source-contract failures. Local pgTAP is 232/233; all three
+Table Memory sync/order/read files pass and the canonical schema contract still
+reports one unvalidated public constraint. Playwright is 4 passed, 2 stale
+password-login assertions failed and 50 credential-dependent tests skipped.
+After the join migration, only the focused invitation-lifecycle regression was
+rerun (7/7), per the instruction not to repeat broad suites absent a new related
+failure; `git diff --check` remains clean.
+
+The physical verdict remains NO-GO. Phone B had notification permission but its
+installed development APK has no Firebase app-option resources; sanitized
+Firebase-only Logcat reports unsuccessful default initialization. No push token
+was registered, so exact-chat/other-tab/elsewhere/background/terminated OS
+delivery is BLOCKED rather than passed; a correctly provisioned validation
+build is required, and the activity route also remains client-triggered and
+non-durable. Synthetic video uploads from both phones failed to become
+canonical on the peer: sanitized job state showed repeated
+`moderation_service_unavailable`, with one job dead-lettered and the other
+retrying. Room/place editing and owner removal are not exposed in the room UI.
+Release also remains blocked by non-idempotent/non-outboxed dish/place
+creation, the remaining extended physical matrix, the existing Memory
+performance failure and broader repository gates. The full audit and evidence
+index are in
+`docs/testing/TABLE_MEMORY_ROOM_TWO_DEVICE_ACCEPTANCE_AUDIT.md`.
+
+### Table Memory blocker remediation continuation (2026-08-03)
+
+Status: **targeted implementation and hosted migrations complete; physical
+two-phone acceptance BLOCKED and release remains NO-GO.** The work stayed inside
+the four reproduced blocker paths and did not repeat the architecture audit or
+broad suite.
+
+Table Memory video preview now shares the local-poster helper used by Share a
+dining experience and preserves the local source, poster, dimensions and stable
+optimistic slot through canonical reconciliation. The UI exposes bounded
+Preparing, Uploading and Processing stages. Privacy-safe client/worker timing
+covers preparation, intent, byte transfer/throughput, completion acknowledgement,
+source download, moderation, probe, transcode, poster, derivative upload and
+finalization. The reproduced worker error was not a provider outage after
+moderation; it was missing audit-identity hashing required by the finalization
+RPC. The worker now reports that configuration failure specifically, readiness
+rejects it, and the Render blueprint declares `API_RATE_LIMIT_HMAC_SECRET` as an
+environment-owned secret. The actual hosted secret and corrected worker deploy
+remain external blockers.
+
+Offline text now persists as `waiting_for_connection`, automatically replays in
+sequence on reconnect with the original idempotency identity and bounded backoff,
+and cannot be cancelled after acknowledgement. Compose time is retained as
+metadata while acknowledged display/order adopts the server commit time. The
+previous physical `Not sent / Retry` observation is not upgraded: Phone B
+disconnected before the corrected two-device path could be run. An A-only
+network-off attempt was discarded because ADB reverse still exposed the local
+API path.
+
+Hosted migration `202608030001_table_memory_activity_unread.sql` adds monotonic
+chat/media/dish read positions plus per-surface server-authoritative unread
+counts. Hosted migration `202608030002_table_memory_notification_outbox.sql`
+atomically inserts deduplicated recipient notifications and chat push jobs while
+excluding the sender, nonmembers, blocked relationships and disabled/inactive
+tokens. All mobile fire-and-forget Table Memory notifier calls were removed and
+the old route is a compatibility no-op. Foreground presentation is suppressed
+for the exact active Chat surface. These database migrations are live, but
+media/dish unread and notification delivery remain physically BLOCKED.
+
+Android Firebase configuration is now accepted only through the environment-owned
+`GOOGLE_SERVICES_JSON` or `EXPO_ANDROID_GOOGLE_SERVICES_FILE` path, and validation
+profiles fail closed when push registration is required without it. Token refresh
+upserts the replacement before removing stale same-installation tokens. No Firebase
+file exists for FoodReview in the workspace, and the installed development APK
+still reports missing default Firebase options, so no push PASS is claimed.
+
+Focused blocker/durable-replica/rapid-send/media-latency/push-worker verification
+passes 47/47; root and mobile typechecks pass; the migration manifest passes with
+95 canonical migrations, 113 historical entries and two documented conflicts;
+the remote ledger matches through `202608030002`. Phone A loaded the latest bundle,
+restored the authenticated audit room and displayed the two-member room, but only
+Phone A was connected. The authoritative audit and focused implementation report
+are `docs/testing/TABLE_MEMORY_ROOM_TWO_DEVICE_ACCEPTANCE_AUDIT.md` and
+`docs/testing/TABLE_MEMORY_ROOM_BLOCKER_FIX_IMPLEMENTATION_2026-08-03.md`.
+
+Security conclusion: authentication, membership, RLS and private Storage remain
+unchanged; read advancement is monotonic and member-scoped; notification creation
+is recipient-bound and transactionally deduplicated; secrets remain environment
+owned; and timing/error telemetry excludes message bodies, identities, storage
+paths, signed URLs, credentials and push tokens.
+
+### Table Memory entity mutation and rating continuation (2026-08-03)
+
+Status: **targeted implementation and hosted migration complete; physical
+two-phone acceptance BLOCKED and release remains NO-GO.** This continuation did
+not repeat the architecture audit or broad suite.
+
+Place update/delete and room-dish delete now use one bounded authenticated API
+route. The route derives the actor, requires current room membership, enforces
+the existing blocked-relationship rule, claims request idempotency and performs
+only the requested entity mutation through the server admin client. Place
+updates retain the same stop ID; deletes are successful when repeated and the
+mobile optimistic hooks maintain exact rollback snapshots plus stale-response
+tombstones. Chat dish cards now use the existing long-press selection contract
+and expose only Delete.
+
+Dish ratings now update the canonical room cache before network execution. A
+per-room/dish latest-intent coordinator coalesces rapid changes, permits one
+in-flight request, follows it with only the latest unsaved value, stores one
+durable SQLite outbox row, replays on reconnect/restart, retains temporary
+failures and reverts permanent denial to the confirmed value. Room-scoped
+Realtime applies rating rows directly and then overlays any newer local intent;
+rating success no longer invalidates or bootstraps the room.
+
+Hosted migration `202608030003_table_memory_entity_mutations.sql` adds monotonic
+rating mutation identity/sequence and a service-only `SECURITY DEFINER` RPC with
+an empty search path, member/dish-room validation, one-row-per-user upsert and a
+sequence guard that refuses stale overwrites. The remote ledger matches local
+through `202608030003`. A local unauthenticated direct API probe returned 401.
+Authenticated nonmember/revoked-member runtime cases remain physically BLOCKED.
+
+Focused entity/rating tests pass 7/7, including exactly one request for five
+rapid rating taps, no overlapping requests, latest follow-up, temporary retry,
+permanent-denial rollback input, deterministic aggregate replacement and
+offline restart replay. Root/mobile typechecks, zero-error focused lint and the
+migration manifest (96 canonical migrations, 114 historical entries, two
+preserved conflicts) pass.
+
+Neither named Motorola phone was visible to ADB, ADB mDNS, Xcode or the two
+listening Metro servers during this continuation, so no new interaction,
+cross-device, persistence, offline or request-count case is marked physically
+PASS. The focused evidence and remaining risks are in
+`docs/testing/TABLE_MEMORY_ROOM_ENTITY_MUTATION_AND_RATING_IMPLEMENTATION_2026-08-03.md`.
+
+### Table Memory deployment preparation (2026-08-03)
+
+The release metadata used by the API health route, Render worker Blueprint,
+operations health/release reports, load fixtures and restore-drill contract now
+matches the already-deployed canonical database head `202608030003`. The worker
+deployment runbook also lists the required environment-owned
+`API_RATE_LIMIT_HMAC_SECRET`; no secret value is stored in source. Render remains
+responsible for supplying that secret before the new worker can pass startup
+readiness and process the physical video acceptance upload.
+
+Focused pre-deploy verification passes: Table Memory blocker/entity/rating,
+rapid-send, durable-replica and invitation checks 48/48; media-worker,
+operations and capacity checks 44/44; mobile typecheck; the 96-migration
+manifest; and the 97-route Next production build. The build completed its own
+TypeScript validation; the standalone root typecheck is rerun after the build
+to avoid concurrent `.next/types` regeneration.

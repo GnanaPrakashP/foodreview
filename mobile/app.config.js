@@ -164,6 +164,17 @@ function isLocalHttpUrl(value) {
 module.exports = ({ config: expoConfig } = {}) => {
   const environment = applicationEnvironment(process.env);
   const identity = releaseIdentity(environment);
+  // EAS secret-file variables resolve to a temporary filesystem path during
+  // the build. The Firebase project file is environment-owned and is never
+  // checked into the repository.
+  const googleServicesFile = (
+    process.env.GOOGLE_SERVICES_JSON ??
+    process.env.EXPO_ANDROID_GOOGLE_SERVICES_FILE ??
+    ""
+  ).trim();
+  if (process.env.EXPO_PUBLIC_REQUIRE_PUSH_REGISTRATION === "1" && !googleServicesFile) {
+    throw new Error("Android push build requires GOOGLE_SERVICES_JSON as an EAS secret file");
+  }
   const config = {
     ...expoConfig,
     ...appJson.expo,
@@ -172,7 +183,8 @@ module.exports = ({ config: expoConfig } = {}) => {
     android: {
       ...expoConfig?.android,
       ...appJson.expo.android,
-      package: identity.androidPackage
+      package: identity.androidPackage,
+      ...(googleServicesFile ? { googleServicesFile } : {})
     },
     ios: {
       ...expoConfig?.ios,

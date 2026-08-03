@@ -19,7 +19,7 @@ services:
       - key: APP_ENVIRONMENT
         value: production
       - key: APP_MIGRATION_HEAD
-        value: "202607290001"
+        value: "202608030003"
       - key: APP_RELEASE
         sync: false
       - key: NEXT_PUBLIC_SUPABASE_URL
@@ -29,6 +29,10 @@ services:
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: MEDIA_WORKER_SECRET
+        sync: false
+      # Used only to HMAC privacy-sensitive audit/rate-limit identifiers. The
+      # value is environment-owned and must never be committed.
+      - key: API_RATE_LIMIT_HMAC_SECRET
         sync: false
       - key: GOOGLE_API_KEY
         sync: false

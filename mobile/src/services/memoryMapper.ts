@@ -144,7 +144,7 @@ export function mapMemoryMessages({
       authorDisplayName: namesByUsername[message.author_name] ?? message.author_name,
       body: message.body,
       attachments: photosByMessageId[message.id] ?? [],
-      createdAt: clientCreatedAt,
+      createdAt: message.created_at,
       deliveryStatus: "sent",
       editedAt: message.edited_at ?? null,
       replyToMessageId: message.reply_to_message_id ?? null,
@@ -208,6 +208,9 @@ export function mapMemorySummary({
     dishCount: dishes.filter((dish) => dish.room_id === room.id).length,
     messageCount: roomMessages.length,
     unreadCount,
+    unreadChatCount: unreadCount,
+    unreadMediaCount: 0,
+    unreadDishCount: 0,
     latestMessage: roomMessages[0]?.body ?? null,
     latestActivityAt,
     createdAt: room.created_at

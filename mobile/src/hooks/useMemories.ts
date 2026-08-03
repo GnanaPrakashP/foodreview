@@ -11,6 +11,7 @@ import {
   createMemoryRoom,
   createMemoryStop,
   deleteMemoryItems,
+  deleteMemoryDish,
   deleteMemoryMessage,
   deleteMemoryPhoto,
   deleteMemoryStop,
@@ -24,9 +25,9 @@ import {
   warmMemoryRoomOfflineFirst,
   leaveMemoryRoom,
   listMemoryRoomsPageOfflineFirst,
+  markMemoryRoomActivityRead,
   markMemoryRoomRead,
   respondToMemoryInvite,
-  setMemoryDishRating,
   updateMemoryRoomOccasion,
   updateMemoryStop,
   type AddMemoryParticipantResult,
@@ -80,9 +81,17 @@ import {
   saveOfflineMemoryRoom,
   saveOfflineMemorySummaries
 } from "@/services/memoryOfflineStore";
+import {
+  applyConfirmedMemoryDishRating,
+  applyMemoryDishRating,
+  overlayPendingMemoryDishRatings,
+  PermanentMemoryDishRatingError,
+  queueMemoryDishRating,
+  recoverPendingMemoryDishRatings
+} from "@/services/memoryDishRatingCoordinator";
 import { getOccasionTheme } from "@/features/occasions/occasionThemes";
 import { useSessionStore } from "@/stores/sessionStore";
-import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary, MemoryStop } from "@/types/models";
+import type { MemoryDishRating, MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary, MemoryStop } from "@/types/models";
 import { getActiveCacheGeneration, isCacheGenerationActive } from "@/security/cacheOwnership";
 import { registerSensitiveResourceCleanup } from "@/security/sensitiveResourceRegistry";
 import { captureMobileError, recordMobileFlow } from "@/observability/mobileTelemetry";
@@ -329,6 +338,9 @@ function createdMemoryRoomSnapshot(
     themeKey,
     title,
     unreadCount: 0,
+    unreadChatCount: 0,
+    unreadMediaCount: 0,
+    unreadDishCount: 0,
     visitDate: input.visitDate?.trim() || null
   };
 
@@ -339,7 +351,7 @@ async function warmMemoryRoomQueries(
   queryClient: QueryClient,
   summaries: MemoryRoomSummary[],
   ownerGeneration: number,
-  options: { force?: boolean } = {}
+  options: { force?: boolean; recoverOutbox?: boolean } = {}
 ) {
   const states = warmStatesForClient(queryClient);
   const pending = summaries.filter((summary) => {
@@ -383,7 +395,9 @@ async function warmMemoryRoomQueries(
               queryClient.setQueryData(memoryKeys.detail(targetSummary.id), cached, { updatedAt: 0 });
             }
 
-            const fresh = await warmMemoryRoomOfflineFirst(targetSummary.id);
+            const fresh = options.recoverOutbox
+              ? await getMemoryRoomOfflineFirst(targetSummary.id)
+              : await warmMemoryRoomOfflineFirst(targetSummary.id);
             if (!isCacheGenerationActive(ownerGeneration)) return;
             if (
               state.revision !== targetRevision ||
@@ -417,7 +431,7 @@ async function warmMemoryRoomQueries(
 
 export async function syncLoadedMemoryRoomCaches(
   queryClient: QueryClient,
-  options: { force?: boolean } = {}
+  options: { force?: boolean; recoverOutbox?: boolean } = {}
 ) {
   const ownerGeneration = getActiveCacheGeneration();
   if (!isCacheGenerationActive(ownerGeneration)) return;
@@ -524,7 +538,7 @@ function persistCurrentMemorySummary(
 }
 
 function claimRealtimeSummaryEvent(
-  entity: "message" | "photo",
+  entity: "dish" | "message" | "photo",
   eventType: "DELETE" | "INSERT",
   id?: string
 ) {
@@ -566,6 +580,7 @@ type AddMemoryMessageInput = {
   clientId: string;
   clientOrderKey: string;
   clientSequence: number;
+  deferUntilOnline?: boolean;
   replacesMessageId?: string;
   replyToMessageId?: string | null;
 };
@@ -643,11 +658,60 @@ type MemoryPhotoRealtimePayload = {
 };
 type MemoryRoomEntityRealtimePayload = {
   eventType: "DELETE" | "INSERT" | "UPDATE";
-  new?: Partial<{ id: string; room_id: string; user_name: string }>;
-  old?: Partial<{ id: string; room_id: string; user_name: string }>;
+  new?: Partial<{ added_by: string; created_at: string; id: string; room_id: string; user_name: string }>;
+  old?: Partial<{ added_by: string; created_at: string; id: string; room_id: string; user_name: string }>;
+};
+type MemoryDishRatingRealtimePayload = {
+  eventType: "DELETE" | "INSERT" | "UPDATE";
+  new: Partial<{
+    created_at: string;
+    dish_id: string;
+    id: string;
+    rated_by: string;
+    rating: number;
+    room_id: string;
+    updated_at: string;
+  }>;
+  old: Partial<{
+    created_at: string;
+    dish_id: string;
+    id: string;
+    rated_by: string;
+    rating: number;
+    room_id: string;
+    updated_at: string;
+  }>;
 };
 const pendingMemoryDeleteBatches = new Map<string, Map<string, MemoryDeleteSets>>();
 registerSensitiveResourceCleanup(() => pendingMemoryDeleteBatches.clear());
+const recentMemoryDishDeleteExpiries = new Map<string, number>();
+const recentMemoryStopDeleteExpiries = new Map<string, number>();
+registerSensitiveResourceCleanup(() => {
+  recentMemoryDishDeleteExpiries.clear();
+  recentMemoryStopDeleteExpiries.clear();
+});
+
+function withoutRecentlyDeletedMemoryDishes(room: MemoryRoom) {
+  const now = Date.now();
+  for (const [key, expiresAt] of recentMemoryDishDeleteExpiries) {
+    if (expiresAt <= now) recentMemoryDishDeleteExpiries.delete(key);
+  }
+  const dishes = room.dishes.filter((dish) => (
+    (recentMemoryDishDeleteExpiries.get(`${room.id}:${dish.id}`) ?? 0) <= now
+  ));
+  return dishes.length === room.dishes.length ? room : { ...room, dishes };
+}
+
+function withoutRecentlyDeletedMemoryStops(room: MemoryRoom) {
+  const now = Date.now();
+  for (const [key, expiresAt] of recentMemoryStopDeleteExpiries) {
+    if (expiresAt <= now) recentMemoryStopDeleteExpiries.delete(key);
+  }
+  const stops = room.stops.filter((stop) => (
+    (recentMemoryStopDeleteExpiries.get(`${room.id}:${stop.id}`) ?? 0) <= now
+  ));
+  return stops.length === room.stops.length ? room : { ...room, stops };
+}
 
 // Cancelling a stuck upload has to outlive the request that is stuck. The media
 // mutation can still be polling for a ready asset for well over a minute after
@@ -811,6 +875,55 @@ function sameUsername(first: string, second: string) {
   return first.toLowerCase() === second.toLowerCase();
 }
 
+function applyRealtimeMemoryDishRating(
+  room: MemoryRoom,
+  payload: MemoryDishRatingRealtimePayload,
+  viewerUsername: string
+) {
+  const row = payload.eventType === "DELETE" ? payload.old : payload.new;
+  if (!row.dish_id) return room;
+  return {
+    ...room,
+    dishes: room.dishes.map((dish) => {
+      if (dish.id !== row.dish_id) return dish;
+      const ratings = dish.ratings.filter((rating) => (
+        row.id ? rating.id !== row.id : true
+      ) && (
+        row.rated_by ? !sameUsername(rating.ratedBy, row.rated_by) : true
+      ));
+      if (
+        payload.eventType !== "DELETE" &&
+        row.id && row.room_id && row.rated_by &&
+        Number.isFinite(row.rating) && row.created_at && row.updated_at
+      ) {
+        const participant = room.participants.find((candidate) => (
+          sameUsername(candidate.username, row.rated_by as string)
+        ));
+        ratings.push({
+          createdAt: row.created_at,
+          dishId: row.dish_id,
+          id: row.id,
+          ratedBy: row.rated_by,
+          ratedByDisplayName: participant?.displayName || row.rated_by,
+          rating: Number(row.rating),
+          roomId: row.room_id,
+          updatedAt: row.updated_at
+        } satisfies MemoryDishRating);
+      }
+      const ownRating = ratings.find((rating) => sameUsername(rating.ratedBy, viewerUsername))?.rating ?? null;
+      return {
+        ...dish,
+        averageRating: ratings.length > 0
+          ? ratings.reduce((total, rating) => total + rating.rating, 0) / ratings.length
+          : null,
+        myRating: ownRating,
+        ratingCount: ratings.length,
+        ratings
+      };
+    })
+  };
+}
+
 function memoryMessageFromRealtimeRow(row: MemoryMessageRealtimePayload["new"], currentRoom: MemoryRoom): MemoryMessage | null {
   const {
     author_name: authorName,
@@ -846,7 +959,7 @@ function memoryMessageFromRealtimeRow(row: MemoryMessageRealtimePayload["new"], 
     clientSequence: rowClientSequence == null || !Number.isSafeInteger(Number(rowClientSequence))
       ? null
       : Number(rowClientSequence),
-    createdAt: clientCreatedAt,
+    createdAt,
     deliveryStatus: "sent",
     editedAt: editedAt ?? null,
     id,
@@ -988,7 +1101,8 @@ function applyRealtimeMessageToSummaries(
           : createdAt,
         latestMessage: body,
         messageCount: alreadyReflected || fromViewer ? memory.messageCount : memory.messageCount + 1,
-        unreadCount: alreadyReflected || fromViewer ? memory.unreadCount : memory.unreadCount + 1
+        unreadCount: alreadyReflected || fromViewer ? memory.unreadCount : memory.unreadCount + 1,
+        unreadChatCount: alreadyReflected || fromViewer ? memory.unreadChatCount : memory.unreadChatCount + 1
       };
     });
 }
@@ -1019,7 +1133,8 @@ function applyRealtimeMessageDeleteToSummaries(
       ? {
         ...memory,
         messageCount: fromViewer ? memory.messageCount : Math.max(0, memory.messageCount - 1),
-        unreadCount: fromViewer ? memory.unreadCount : Math.max(0, memory.unreadCount - 1)
+        unreadCount: fromViewer ? memory.unreadCount : Math.max(0, memory.unreadCount - 1),
+        unreadChatCount: fromViewer ? memory.unreadChatCount : Math.max(0, memory.unreadChatCount - 1)
       }
       : memory
   ));
@@ -1235,9 +1350,34 @@ function applyRealtimePhotoInsertToSummaries(
   const fromViewer = uploaderName && viewerUsername ? sameUsername(uploaderName, viewerUsername) : false;
   return current.map((memory) => (
     memory.id === rowRoomId
-      ? { ...memory, photoCount: fromViewer ? memory.photoCount : memory.photoCount + 1 }
+      ? {
+        ...memory,
+        photoCount: fromViewer ? memory.photoCount : memory.photoCount + 1,
+        unreadCount: fromViewer ? memory.unreadCount : memory.unreadCount + 1,
+        unreadMediaCount: fromViewer ? memory.unreadMediaCount : memory.unreadMediaCount + 1
+      }
       : memory
   ));
+}
+
+function applyRealtimeDishInsertToSummaries(
+  current: MemoryRoomSummary[] | undefined,
+  row: MemoryRoomEntityRealtimePayload["new"],
+  viewerUsername?: string
+) {
+  if (!current || !row?.room_id || !row.added_by) return current;
+  const fromViewer = viewerUsername ? sameUsername(row.added_by, viewerUsername) : false;
+  return current.map((memory) => memory.id === row.room_id
+    ? {
+      ...memory,
+      dishCount: fromViewer ? memory.dishCount : memory.dishCount + 1,
+      latestActivityAt: row.created_at && timeFromIso(row.created_at) > timeFromIso(memory.latestActivityAt)
+        ? row.created_at
+        : memory.latestActivityAt,
+      unreadCount: fromViewer ? memory.unreadCount : memory.unreadCount + 1,
+      unreadDishCount: fromViewer ? memory.unreadDishCount : memory.unreadDishCount + 1
+    }
+    : memory);
 }
 
 function applyRealtimePhotoDeleteToSummaries(
@@ -1259,15 +1399,23 @@ function preserveRecentMediaAttachments(previous: unknown, next: unknown) {
   const previousRoom = previous as MemoryRoom | undefined;
   const nextRoom = next as MemoryRoom | undefined;
   if (!nextRoom) return next;
-  if (!previousRoom) return applyPendingMemoryDeletes(nextRoom);
+  const profile = useSessionStore.getState().profile;
+  const applyPendingRatings = (room: MemoryRoom) => profile?.username
+    ? overlayPendingMemoryDishRatings(
+      room,
+      profile.username,
+      profile.displayName || profile.username
+    )
+    : room;
+  if (!previousRoom) return applyPendingRatings(withoutRecentlyDeletedMemoryStops(withoutRecentlyDeletedMemoryDishes(applyPendingMemoryDeletes(nextRoom))));
 
   const photosById = new Map(previousRoom.photos.map((photo) => [photo.id, photo]));
   for (const photo of nextRoom.photos) photosById.set(photo.id, photo);
-  return applyPendingMemoryDeletes({
+  return applyPendingRatings(withoutRecentlyDeletedMemoryStops(withoutRecentlyDeletedMemoryDishes(applyPendingMemoryDeletes({
     ...nextRoom,
     messages: mergeMemoryMessageSnapshot(previousRoom.messages, nextRoom.messages),
     photos: sortMemoryPhotos(Array.from(photosById.values()))
-  });
+  }))));
 }
 
 function normalizedDeleteSets(input: DeleteMemoryItemsInput): MemoryDeleteSets {
@@ -1590,7 +1738,21 @@ export function useMemoryRoomsRealtime(enabled = true) {
       }
       // The room-scoped subscription owns detail/media reconciliation.
     };
-
+    const handleDishChange = (payload: MemoryRoomEntityRealtimePayload) => {
+      const row = payload.eventType === "DELETE" ? payload.old : payload.new;
+      if (!row?.room_id) {
+        scheduleRefresh();
+        return;
+      }
+      if (payload.eventType === "INSERT" && claimRealtimeSummaryEvent("dish", "INSERT", row.id)) {
+        setMemorySummaryPages(queryClient, (current) => (
+          applyRealtimeDishInsertToSummaries(current, row, profile?.username)
+        ));
+        persistCurrentMemorySummary(queryClient, row.room_id, "realtime_dish_insert_summary");
+      }
+      scheduleRoomCacheRefresh(row.room_id);
+      scheduleRefresh();
+    };
     const channel = supabase
       .channel("shared-memory-rooms")
       .on(
@@ -1606,15 +1768,7 @@ export function useMemoryRoomsRealtime(enabled = true) {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_dishes" },
-        (payload) => handleRoomEntityChange(
-          payload as MemoryRoomEntityRealtimePayload,
-          { countField: "dishCount" }
-        )
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "shared_memory_dish_ratings" },
-        (payload) => handleRoomEntityChange(payload as MemoryRoomEntityRealtimePayload)
+        (payload) => handleDishChange(payload as MemoryRoomEntityRealtimePayload)
       )
       .on(
         "postgres_changes",
@@ -2192,6 +2346,30 @@ export function useMemoryRoomRealtime(roomId: string, journeySession?: MemoryRoo
 
       scheduleRefresh();
     };
+    const handleDishRatingChange = (payload: MemoryDishRatingRealtimePayload) => {
+      if (!isCacheGenerationActive(ownerGeneration)) return;
+      const row = payload.eventType === "DELETE" ? payload.old : payload.new;
+      if (row.room_id !== roomId || !row.dish_id || !profile?.username) {
+        scheduleRefresh();
+        return;
+      }
+      let nextRoom: MemoryRoom | null = null;
+      queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => {
+        if (!current) return current;
+        nextRoom = overlayPendingMemoryDishRatings(
+          applyRealtimeMemoryDishRating(current, payload, profile.username),
+          profile.username,
+          profile.displayName || profile.username
+        );
+        return nextRoom;
+      });
+      if (nextRoom) {
+        observeOfflineMemoryWrite(
+          saveOfflineMemoryRoom(nextRoom),
+          "realtime_dish_rating"
+        );
+      }
+    };
 
     const channel = supabase
       .channel(`shared-memory-room:${roomId}`)
@@ -2220,7 +2398,7 @@ export function useMemoryRoomRealtime(roomId: string, journeySession?: MemoryRoo
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_memory_dish_ratings", filter: `room_id=eq.${roomId}` },
-        reconcileRoomOverview
+        (payload) => handleDishRatingChange(payload as MemoryDishRatingRealtimePayload)
       )
       .on(
         "postgres_changes",
@@ -2270,7 +2448,7 @@ export function useMemoryRoomRealtime(roomId: string, journeySession?: MemoryRoo
       releaseRealtimeCounter();
       void supabase.removeChannel(channel);
     };
-  }, [journeySession, profile?.username, queryClient, roomId]);
+  }, [journeySession, profile?.displayName, profile?.username, queryClient, roomId]);
 }
 
 export function useCreateMemoryRoomMutation() {
@@ -2397,7 +2575,15 @@ export function useMarkMemoryRoomReadMutation(roomId: string) {
         if (!current) return current;
         return current.map((memory) => (
           memory.id === roomId
-            ? { ...memory, unreadCount: Math.min(memory.unreadCount, remainingUnreadCount) }
+            ? (() => {
+              const unreadChatCount = Math.min(memory.unreadChatCount, remainingUnreadCount);
+              const cleared = Math.max(0, memory.unreadChatCount - unreadChatCount);
+              return {
+                ...memory,
+                unreadChatCount,
+                unreadCount: Math.max(0, memory.unreadCount - cleared)
+              };
+            })()
             : memory
         ));
       });
@@ -2428,6 +2614,31 @@ export function useMarkMemoryRoomReadMutation(roomId: string) {
         void queryClient.invalidateQueries({ exact: true, queryKey: memoryKeys.list });
       });
     }
+  });
+}
+
+export function useMarkMemoryRoomActivityReadMutation(
+  roomId: string,
+  surface: "media" | "dishes"
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (readAt?: string) => markMemoryRoomActivityRead(roomId, surface, readAt),
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: memoryKeys.list });
+      const previousList = queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list);
+      setMemorySummaryPages(queryClient, (current) => current?.map((memory) => {
+        if (memory.id !== roomId) return memory;
+        const field = surface === "media" ? "unreadMediaCount" : "unreadDishCount";
+        const cleared = memory[field];
+        return { ...memory, [field]: 0, unreadCount: Math.max(0, memory.unreadCount - cleared) };
+      }));
+      return { previousList };
+    },
+    onError: (_error, _readAt, context) => {
+      if (context?.previousList) queryClient.setQueryData(memoryKeys.list, context.previousList);
+    },
+    onSuccess: () => persistCurrentMemorySummary(queryClient, roomId, `memory_${surface}_read`)
   });
 }
 
@@ -2488,9 +2699,10 @@ export function useAddMemoryMessageMutation(roomId: string) {
   const profile = useSessionStore((state) => state.profile);
   return useMutation({
     mutationFn: (input: AddMemoryMessageInput) => {
+      if (input.deferUntilOnline) return Promise.resolve(null);
       recordMemoryChatPlacement("HTTP_STARTED", {
         clientId: input.clientId,
-        deliveryStatus: "pending"
+        deliveryStatus: "sending"
       });
       return addMemoryMessage(
         roomId,
@@ -2514,6 +2726,7 @@ export function useAddMemoryMessageMutation(roomId: string) {
       const replyToMessage = input.replyToMessageId
         ? findMemoryMessage(previousRoom?.messages ?? [], input.replyToMessageId) ?? null
         : null;
+      const deferred = input.deferUntilOnline === true;
       const optimisticMessage: MemoryMessage = {
         attachments: [],
         authorDisplayName: profile.displayName || profile.username,
@@ -2524,9 +2737,11 @@ export function useAddMemoryMessageMutation(roomId: string) {
         clientOrderKey: input.clientOrderKey,
         clientSequence: input.clientSequence,
         createdAt: now,
-        deliveryStatus: "pending",
+        deliveryStatus: deferred ? "waiting_for_connection" : "sending",
         editedAt: null,
+        firstSendAttemptAt: deferred ? null : now,
         id: `optimistic-message:${roomId}:${clientId}`,
+        sendAttemptCount: deferred ? 0 : 1,
         serverCreatedAt: null,
         serverId: null,
         replyToMessage: replyToMessage
@@ -2574,7 +2789,7 @@ export function useAddMemoryMessageMutation(roomId: string) {
             : memory);
       });
 
-      beginForegroundMemoryMessageSend(clientId);
+      if (!deferred) beginForegroundMemoryMessageSend(clientId);
       recordMemoryChatPlacement("SQLITE_STARTED", {
         clientId,
         deliveryStatus: optimisticMessage.deliveryStatus
@@ -2591,7 +2806,8 @@ export function useAddMemoryMessageMutation(roomId: string) {
       if (context?.optimisticMessage) {
         const failedMessage: MemoryMessage = {
           ...context.optimisticMessage,
-          deliveryStatus: "failed"
+          deliveryStatus: "failed_retryable",
+          sendAttemptCount: Math.max(context.optimisticMessage.sendAttemptCount ?? 1, 5)
         };
         queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => {
           if (!current) return current;
@@ -2612,6 +2828,7 @@ export function useAddMemoryMessageMutation(roomId: string) {
       }
     },
     onSuccess: (result, _input, context) => {
+      if (!result) return;
       if (context?.optimisticMessage) {
         recordMemoryChatPlacement("HTTP_CONFIRMED", {
           clientId: context.clientId,
@@ -2627,7 +2844,7 @@ export function useAddMemoryMessageMutation(roomId: string) {
           clientSequence: result.client_sequence == null
             ? context.optimisticMessage.clientSequence
             : Number(result.client_sequence),
-          createdAt: result.client_created_at ?? context.optimisticMessage.clientCreatedAt,
+          createdAt: result.created_at,
           deliveryStatus: "sent",
           editedAt: result.edited_at ?? null,
           id: result.id,
@@ -2648,7 +2865,9 @@ export function useAddMemoryMessageMutation(roomId: string) {
         );
       }
       persistCurrentMemorySummary(queryClient, roomId, "message_send_summary");
-    }
+    },
+    retry: (failureCount) => failureCount < 4,
+    retryDelay: (attempt) => Math.min(750 * (2 ** attempt), 6_000)
   });
 }
 
@@ -2819,15 +3038,131 @@ export function useAddMemoryDishMutation(roomId: string) {
   });
 }
 
-export function useSetMemoryDishRatingMutation(roomId: string) {
+export function useDeleteMemoryDishMutation(roomId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: Omit<SetMemoryDishRatingInput, "roomId">) => setMemoryDishRating({ ...input, roomId }),
+    mutationFn: (dishId: string) => deleteMemoryDish(roomId, dishId),
+    onMutate: async (dishId) => {
+      const detailKey = memoryKeys.detail(roomId);
+      const tombstoneKey = `${roomId}:${dishId}`;
+      recentMemoryDishDeleteExpiries.set(tombstoneKey, Date.now() + 60_000);
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: detailKey }),
+        queryClient.cancelQueries({ queryKey: memoryKeys.list })
+      ]);
+      const previousRoom = queryClient.getQueryData<MemoryRoom>(detailKey);
+      const previousList = queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list);
+      const nextRoom = previousRoom
+        ? { ...previousRoom, dishes: previousRoom.dishes.filter((dish) => dish.id !== dishId) }
+        : undefined;
+      if (nextRoom) {
+        queryClient.setQueryData(detailKey, nextRoom);
+        observeOfflineMemoryWrite(saveOfflineMemoryRoom(nextRoom), "dish_delete_room");
+      }
+      setMemorySummaryPages(queryClient, (current) => current?.map((memory) => (
+        memory.id === roomId
+          ? { ...memory, dishCount: Math.max(0, memory.dishCount - 1) }
+          : memory
+      )));
+      persistCurrentMemorySummary(queryClient, roomId, "dish_delete_summary");
+      return { previousList, previousRoom, tombstoneKey };
+    },
+    onError: (_error, _dishId, context) => {
+      if (context?.tombstoneKey) recentMemoryDishDeleteExpiries.delete(context.tombstoneKey);
+      if (context?.previousRoom) {
+        queryClient.setQueryData(memoryKeys.detail(roomId), context.previousRoom);
+        observeOfflineMemoryWrite(saveOfflineMemoryRoom(context.previousRoom), "dish_delete_room_rollback");
+      }
+      if (context?.previousList) {
+        queryClient.setQueryData(memoryKeys.list, context.previousList);
+        persistCurrentMemorySummary(queryClient, roomId, "dish_delete_summary_rollback");
+      }
+    },
     onSuccess: () => {
+      // The tombstone keeps the optimistic removal stable while the
+      // authoritative refresh repairs every durable projection, including a
+      // room snapshot that may have been written by an older in-flight read.
       queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
       queryClient.invalidateQueries({ queryKey: memoryKeys.list });
     }
   });
+}
+
+export function useSetMemoryDishRatingMutation(roomId: string) {
+  const queryClient = useQueryClient();
+  const profile = useSessionStore((state) => state.profile);
+  type RatingMutationInput = Pick<SetMemoryDishRatingInput, "dishId" | "rating"> & {
+    confirmedRating?: number | null;
+    deferUntilOnline?: boolean;
+  };
+  const mutation = useMutation({
+    mutationFn: (input: RatingMutationInput) => queueMemoryDishRating({
+      confirmedRating: input.confirmedRating ?? null,
+      deferUntilOnline: input.deferUntilOnline,
+      dishId: input.dishId,
+      rating: input.rating,
+      roomId
+    }),
+    onMutate: (input) => {
+      const detailKey = memoryKeys.detail(roomId);
+      const current = queryClient.getQueryData<MemoryRoom>(detailKey);
+      const confirmedRating = current?.dishes.find((dish) => dish.id === input.dishId)?.myRating ?? null;
+      input.confirmedRating = confirmedRating;
+      if (!current || !profile?.username) return { confirmedRating, previousRoom: current };
+      const nextRoom = applyMemoryDishRating(
+        current,
+        input.dishId,
+        profile.username,
+        profile.displayName || profile.username,
+        input.rating
+      );
+      queryClient.setQueryData(detailKey, nextRoom);
+      observeOfflineMemoryWrite(saveOfflineMemoryRoom(nextRoom), "dish_rating_optimistic");
+      return { confirmedRating, previousRoom: current };
+    },
+    onError: (error, input, context) => {
+      const confirmedRating = error instanceof PermanentMemoryDishRatingError
+        ? error.confirmedRating
+        : context?.confirmedRating ?? null;
+      if (!profile?.username) {
+        if (context?.previousRoom) queryClient.setQueryData(memoryKeys.detail(roomId), context.previousRoom);
+        return;
+      }
+      queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => {
+        if (!current) return context?.previousRoom;
+        const reverted = applyConfirmedMemoryDishRating(
+          current,
+          input.dishId,
+          profile.username,
+          profile.displayName || profile.username,
+          confirmedRating
+        );
+        observeOfflineMemoryWrite(saveOfflineMemoryRoom(reverted), "dish_rating_rollback");
+        return reverted;
+      });
+    }
+  });
+
+  useEffect(() => {
+    if (!roomId || !profile?.username) return;
+    let cancelled = false;
+    void recoverPendingMemoryDishRatings(roomId).then(() => {
+      if (cancelled) return;
+      queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => (
+        current
+          ? overlayPendingMemoryDishRatings(
+            current,
+            profile.username,
+            profile.displayName || profile.username
+          )
+          : current
+      ));
+    }).catch((error) => captureMobileError("memory.dish_rating_restore_failed", error, { roomId }));
+    return () => { cancelled = true; };
+  }, [profile?.displayName, profile?.username, queryClient, roomId]);
+
+  const flushPending = useCallback(() => recoverPendingMemoryDishRatings(roomId, { flush: true }), [roomId]);
+  return { ...mutation, flushPending };
 }
 
 export function useCreateMemoryStopMutation(roomId: string) {
@@ -2896,9 +3231,59 @@ export function useUpdateMemoryStopMutation(roomId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: Omit<UpdateMemoryStopInput, "roomId">) => updateMemoryStop({ ...input, roomId }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+    onMutate: async (input) => {
+      const detailKey = memoryKeys.detail(roomId);
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: detailKey }),
+        queryClient.cancelQueries({ queryKey: memoryKeys.list })
+      ]);
+      const previousRoom = queryClient.getQueryData<MemoryRoom>(detailKey);
+      const previousList = queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list);
+      const nextRoom = previousRoom ? {
+        ...previousRoom,
+        stops: previousRoom.stops.map((stop) => stop.id === input.stopId
+          ? {
+            ...stop,
+            name: input.name?.trim() ?? stop.name,
+            note: input.note?.trim() || null,
+            placeId: input.placeId?.trim() || null,
+            stopType: input.stopType ?? stop.stopType
+          }
+          : stop)
+      } : undefined;
+      if (nextRoom) {
+        queryClient.setQueryData(detailKey, nextRoom);
+        observeOfflineMemoryWrite(saveOfflineMemoryRoom(nextRoom), "stop_update_room");
+        setMemorySummaryPages(queryClient, (current) => current?.map((memory) => (
+          memory.id === roomId
+            ? { ...memory, placeNames: memoryPlaceNamesFromStops(nextRoom.stops) }
+            : memory
+        )));
+        persistCurrentMemorySummary(queryClient, roomId, "stop_update_summary");
+      }
+      return { previousList, previousRoom };
+    },
+    onSuccess: (updatedStop) => {
+      queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => {
+        if (!current) return current;
+        const existing = current.stops.find((stop) => stop.id === updatedStop.id);
+        const stop = existing
+          ? { ...updatedStop, createdByDisplayName: existing.createdByDisplayName }
+          : updatedStop;
+        const nextRoom = { ...current, stops: upsertMemoryStop(current.stops, stop) };
+        observeOfflineMemoryWrite(saveOfflineMemoryRoom(nextRoom), "stop_update_confirm");
+        return nextRoom;
+      });
+    },
+    onError: (_error, _input, context) => {
+      if (context?.previousRoom) {
+        queryClient.setQueryData(memoryKeys.detail(roomId), context.previousRoom);
+        observeOfflineMemoryWrite(saveOfflineMemoryRoom(context.previousRoom), "stop_update_room_rollback");
+      }
+      if (context?.previousList) {
+        queryClient.setQueryData(memoryKeys.list, context.previousList);
+        persistCurrentMemorySummary(queryClient, roomId, "stop_update_summary_rollback");
+      }
     }
   });
 }
@@ -2907,9 +3292,41 @@ export function useDeleteMemoryStopMutation(roomId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (stopId: string) => deleteMemoryStop(roomId, stopId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+    onMutate: async (stopId) => {
+      const detailKey = memoryKeys.detail(roomId);
+      const tombstoneKey = `${roomId}:${stopId}`;
+      recentMemoryStopDeleteExpiries.set(tombstoneKey, Date.now() + 60_000);
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: detailKey }),
+        queryClient.cancelQueries({ queryKey: memoryKeys.list })
+      ]);
+      const previousRoom = queryClient.getQueryData<MemoryRoom>(detailKey);
+      const previousList = queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list);
+      const nextRoom = previousRoom
+        ? { ...previousRoom, stops: previousRoom.stops.filter((stop) => stop.id !== stopId) }
+        : undefined;
+      if (nextRoom) {
+        queryClient.setQueryData(detailKey, nextRoom);
+        observeOfflineMemoryWrite(saveOfflineMemoryRoom(nextRoom), "stop_delete_room");
+        setMemorySummaryPages(queryClient, (current) => current?.map((memory) => (
+          memory.id === roomId
+            ? { ...memory, placeNames: memoryPlaceNamesFromStops(nextRoom.stops) }
+            : memory
+        )));
+        persistCurrentMemorySummary(queryClient, roomId, "stop_delete_summary");
+      }
+      return { previousList, previousRoom, tombstoneKey };
+    },
+    onError: (_error, _stopId, context) => {
+      if (context?.tombstoneKey) recentMemoryStopDeleteExpiries.delete(context.tombstoneKey);
+      if (context?.previousRoom) {
+        queryClient.setQueryData(memoryKeys.detail(roomId), context.previousRoom);
+        observeOfflineMemoryWrite(saveOfflineMemoryRoom(context.previousRoom), "stop_delete_room_rollback");
+      }
+      if (context?.previousList) {
+        queryClient.setQueryData(memoryKeys.list, context.previousList);
+        persistCurrentMemorySummary(queryClient, roomId, "stop_delete_summary_rollback");
+      }
     }
   });
 }
@@ -3202,7 +3619,7 @@ export function useAddMemoryPhotoMutation(roomId: string) {
           clientSequence: result.message.client_sequence == null
             ? context.optimisticMessage?.clientSequence ?? null
             : Number(result.message.client_sequence),
-          createdAt: result.message.client_created_at ?? context.optimisticMessage?.clientCreatedAt ?? result.message.created_at,
+          createdAt: result.message.created_at,
           deliveryStatus: "sent",
           editedAt: result.message.edited_at ?? null,
           id: result.message.id,

@@ -54,6 +54,16 @@ type StoredSyncCursorRow = {
   sync_cursor: string;
 };
 
+export type MemoryDishRatingOutboxEntry = {
+  clientMutationId: string;
+  clientSequence: number;
+  confirmedRating: number | null;
+  desiredRating: number;
+  dishId: string;
+  roomId: string;
+  updatedAt: number;
+};
+
 let dbState: { ownerScope: string; promise: Promise<SQLite.SQLiteDatabase> } | null = null;
 // Expo SQLite's async transactions share a connection and may absorb queries
 // from overlapping tasks. Rapid sends can therefore collide an outbox insert
@@ -264,6 +274,18 @@ export async function setMemoryOfflineOwnerScope(ownerScope: string | null) {
         on memory_message_outbox(client_id);
       create index if not exists memory_message_outbox_room_created_idx
         on memory_message_outbox(room_id, created_at, message_id);
+      create table if not exists memory_dish_rating_outbox (
+        room_id text not null,
+        dish_id text not null,
+        desired_rating integer not null,
+        confirmed_rating integer,
+        client_mutation_id text not null,
+        client_sequence integer not null,
+        updated_at integer not null,
+        primary key (room_id, dish_id)
+      );
+      create index if not exists memory_dish_rating_outbox_updated_idx
+        on memory_dish_rating_outbox(updated_at, room_id, dish_id);
     `);
     await ensureTableColumns(db, "memory_messages", {
       author_name: "text",
@@ -405,7 +427,7 @@ function normalizeStoredMemoryMessage(message: MemoryMessage): MemoryMessage {
     clientOrderKey: message.clientOrderKey ??
       `legacy:${clientCreatedAt}:${clientId ?? serverId ?? message.id}`,
     clientSequence: Number.isSafeInteger(message.clientSequence) ? message.clientSequence : null,
-    createdAt: clientCreatedAt,
+    createdAt: message.serverCreatedAt ?? (serverId ? message.createdAt : clientCreatedAt),
     serverCreatedAt: message.serverCreatedAt ?? (serverId ? message.createdAt : null),
     serverId
   };
@@ -846,7 +868,7 @@ export async function saveOfflineMemoryOutboxMessage(clientId: string, message: 
            client_order_key = excluded.client_order_key,
            delivery_status = excluded.delivery_status,
            retry_count = memory_message_outbox.retry_count +
-             case when excluded.delivery_status = 'retrying' then 1 else 0 end,
+             case when excluded.delivery_status in ('retrying', 'sending') then 1 else 0 end,
            last_error_category = excluded.last_error_category,
            payload = excluded.payload,
            updated_at = excluded.updated_at`,
@@ -859,11 +881,109 @@ export async function saveOfflineMemoryOutboxMessage(clientId: string, message: 
         message.clientOrderKey,
         message.deliveryStatus ?? "pending",
         0,
-        message.deliveryStatus === "failed" ? "transient_or_unknown" : null,
+        message.deliveryStatus === "failed" || message.deliveryStatus === "failed_retryable"
+          ? "transient_or_unknown"
+          : message.deliveryStatus === "failed_permanent"
+            ? "permanent"
+            : null,
         JSON.stringify(message),
         now
       );
     });
+  });
+}
+
+export async function saveOfflineMemoryDishRatingOutbox(entry: MemoryDishRatingOutboxEntry) {
+  return criticalOfflineWrite("dish_rating_outbox_upsert", async () => {
+    const db = await offlineDb();
+    await db.runAsync(
+      `insert into memory_dish_rating_outbox (
+         room_id, dish_id, desired_rating, confirmed_rating,
+         client_mutation_id, client_sequence, updated_at
+       ) values (?, ?, ?, ?, ?, ?, ?)
+       on conflict(room_id, dish_id) do update set
+         desired_rating = excluded.desired_rating,
+         confirmed_rating = excluded.confirmed_rating,
+         client_mutation_id = excluded.client_mutation_id,
+         client_sequence = excluded.client_sequence,
+         updated_at = excluded.updated_at`,
+      entry.roomId,
+      entry.dishId,
+      entry.desiredRating,
+      entry.confirmedRating,
+      entry.clientMutationId,
+      entry.clientSequence,
+      entry.updatedAt
+    );
+  });
+}
+
+export async function readOfflineMemoryDishRatingOutbox(roomId?: string) {
+  const db = await offlineDb();
+  const rows = roomId
+    ? await db.getAllAsync<{
+      client_mutation_id: string;
+      client_sequence: number;
+      confirmed_rating: number | null;
+      desired_rating: number;
+      dish_id: string;
+      room_id: string;
+      updated_at: number;
+    }>(
+      `select room_id, dish_id, desired_rating, confirmed_rating,
+              client_mutation_id, client_sequence, updated_at
+       from memory_dish_rating_outbox
+       where room_id = ?
+       order by updated_at asc, dish_id asc`,
+      roomId
+    )
+    : await db.getAllAsync<{
+      client_mutation_id: string;
+      client_sequence: number;
+      confirmed_rating: number | null;
+      desired_rating: number;
+      dish_id: string;
+      room_id: string;
+      updated_at: number;
+    }>(
+      `select room_id, dish_id, desired_rating, confirmed_rating,
+              client_mutation_id, client_sequence, updated_at
+       from memory_dish_rating_outbox
+       order by updated_at asc, room_id asc, dish_id asc`
+    );
+  return rows.map((row): MemoryDishRatingOutboxEntry => ({
+    clientMutationId: row.client_mutation_id,
+    clientSequence: row.client_sequence,
+    confirmedRating: row.confirmed_rating,
+    desiredRating: row.desired_rating,
+    dishId: row.dish_id,
+    roomId: row.room_id,
+    updatedAt: row.updated_at
+  }));
+}
+
+export async function deleteOfflineMemoryDishRatingOutbox(
+  roomId: string,
+  dishId: string,
+  clientSequence?: number
+) {
+  return criticalOfflineWrite("dish_rating_outbox_delete", async () => {
+    const db = await offlineDb();
+    if (clientSequence === undefined) {
+      await db.runAsync(
+        "delete from memory_dish_rating_outbox where room_id = ? and dish_id = ?",
+        roomId,
+        dishId
+      );
+      return;
+    }
+    await db.runAsync(
+      `delete from memory_dish_rating_outbox
+       where room_id = ? and dish_id = ? and client_sequence <= ?`,
+      roomId,
+      dishId,
+      clientSequence
+    );
   });
 }
 
@@ -1128,6 +1248,7 @@ export async function deleteOfflineMemoryRoom(roomId: string) {
       await db.runAsync("delete from memory_photos where room_id = ?", roomId);
       await db.runAsync("delete from memory_messages where room_id = ?", roomId);
       await db.runAsync("delete from memory_message_outbox where room_id = ?", roomId);
+      await db.runAsync("delete from memory_dish_rating_outbox where room_id = ?", roomId);
       await db.runAsync("delete from memory_room_sync_state where room_id = ?", roomId);
       await db.runAsync("delete from memory_room_snapshots where room_id = ?", roomId);
       await db.runAsync("delete from memory_room_summaries where room_id = ?", roomId);
@@ -1169,14 +1290,17 @@ export async function saveOfflineMemoryReadState(
       );
       const summary = summaryRow ? safeParse<MemoryRoomSummary>(summaryRow.payload) : null;
       if (summary) {
+        const unreadChatCount = Math.min(
+          summary.unreadChatCount ?? summary.unreadCount,
+          Math.max(0, remainingUnreadCount)
+        );
+        const cleared = Math.max(0, (summary.unreadChatCount ?? summary.unreadCount) - unreadChatCount);
         await db.runAsync(
           "update memory_room_summaries set payload = ?, updated_at = ? where room_id = ?",
           JSON.stringify({
             ...summary,
-            unreadCount: Math.min(
-              summary.unreadCount,
-              Math.max(0, remainingUnreadCount)
-            )
+            unreadChatCount,
+            unreadCount: Math.max(0, summary.unreadCount - cleared)
           }),
           now,
           roomId

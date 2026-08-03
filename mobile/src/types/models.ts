@@ -326,7 +326,7 @@ export type MemoryMessage = {
   id: string;
   /** Stable identity generated once by the sending client. */
   clientId: string | null;
-  /** Client wall-clock time used for stable visual ordering. */
+  /** Client wall-clock time when the user composed the message. */
   clientCreatedAt: string;
   /** Monotonic per-room sequence assigned at the send gesture. */
   clientSequence: number | null;
@@ -334,8 +334,12 @@ export type MemoryMessage = {
   clientOrderKey: string;
   /** Authoritative database id once the message has been accepted. */
   serverId: string | null;
-  /** Authoritative database timestamp; never replaces clientCreatedAt visually. */
+  /** Authoritative database commit timestamp used for sent display/order. */
   serverCreatedAt: string | null;
+  /** First network attempt; null while a message is only queued offline. */
+  firstSendAttemptAt?: string | null;
+  /** Bounded automatic delivery attempts made for this logical message. */
+  sendAttemptCount?: number;
   roomId: string;
   authorName: string;
   authorDisplayName: string;
@@ -349,6 +353,11 @@ export type MemoryMessage = {
     | "processing_failed"
     | "rejected"
     | "pending"
+    | "waiting_for_connection"
+    | "sending"
+    | "failed_retryable"
+    | "failed_permanent"
+    | "cancelled"
     | "retrying"
     | "sent"
     | "failed";
@@ -473,6 +482,9 @@ export type MemoryRoomSummary = {
   dishCount: number;
   messageCount: number;
   unreadCount: number;
+  unreadChatCount: number;
+  unreadMediaCount: number;
+  unreadDishCount: number;
   latestMessage: string | null;
   latestActivityAt: string;
   createdAt: string;

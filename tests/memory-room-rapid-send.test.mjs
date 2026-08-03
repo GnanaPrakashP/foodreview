@@ -46,12 +46,13 @@ function message({
 }
 
 function confirm(local, serverIndex) {
+  const serverCreatedAt = `2026-07-27T11:00:00.${String(999 - serverIndex).padStart(3, "0")}Z`;
   return {
     ...local,
-    createdAt: local.clientCreatedAt,
+    createdAt: serverCreatedAt,
     deliveryStatus: "sent",
     id: `server-${serverIndex}`,
-    serverCreatedAt: `2026-07-27T11:00:00.${String(999 - serverIndex).padStart(3, "0")}Z`,
+    serverCreatedAt,
     serverId: `server-${serverIndex}`
   };
 }
@@ -76,7 +77,7 @@ test("foreground send ownership prevents recovery replay until every owner relea
   assert.equal(isForegroundMemoryMessageSend(clientId), false);
 });
 
-test("reverse HTTP/realtime acknowledgements keep A-E in press order and one row per clientId", () => {
+test("reverse HTTP/realtime acknowledgements converge on server commit order with one row per clientId", () => {
   const optimistic = ["A", "B", "C", "D", "E"].map((body, sequence) => (
     message({ body, clientId: `client-${sequence}-abcdefghijkl`, sequence })
   ));
@@ -84,7 +85,7 @@ test("reverse HTTP/realtime acknowledgements keep A-E in press order and one row
   for (const index of [4, 3, 2, 1, 0]) {
     state = upsertMemoryMessage(state, confirm(optimistic[index], index));
   }
-  assert.deepEqual(state.map((item) => item.body), ["A", "B", "C", "D", "E"]);
+  assert.deepEqual(state.map((item) => item.body), ["E", "D", "C", "B", "A"]);
   assert.equal(new Set(state.map(memoryMessageLogicalKey)).size, 5);
   assert.ok(state.every((item) => item.deliveryStatus === "sent"));
 });
@@ -104,13 +105,13 @@ test("all 120 A-E acknowledgement orders tolerate duplicate realtime, HTTP, and 
       state = mergeMemoryMessageSnapshot(state, confirmed);
       state = mergeMemoryMessageSnapshot(state, []);
     }
-    assert.deepEqual(state.map((item) => item.body), ["A", "B", "C", "D", "E"]);
+    assert.deepEqual(state.map((item) => item.body), ["E", "D", "C", "B", "A"]);
     assert.equal(state.length, 5);
     assert.equal(new Set(state.map(memoryMessageLogicalKey)).size, 5);
   }
 });
 
-test("twenty reverse confirmations retain press order", () => {
+test("twenty reverse confirmations converge on server commit order", () => {
   const optimistic = Array.from({ length: 20 }, (_, sequence) => (
     message({
       body: `message-${String(sequence).padStart(2, "0")}`,
@@ -122,7 +123,7 @@ test("twenty reverse confirmations retain press order", () => {
   for (let index = optimistic.length - 1; index >= 0; index -= 1) {
     state = upsertMemoryMessage(state, confirm(optimistic[index], index));
   }
-  assert.deepEqual(state.map((item) => item.body), optimistic.map((item) => item.body));
+  assert.deepEqual(state.map((item) => item.body), optimistic.map((item) => item.body).reverse());
 });
 
 test("identical rapid messages stay distinct through realtime then HTTP duplicates", () => {
@@ -133,7 +134,7 @@ test("identical rapid messages stay distinct through realtime then HTTP duplicat
   state = upsertMemoryMessage(state, confirm(first, 1));
   state = upsertMemoryMessage(state, confirm(second, 2));
   assert.equal(state.length, 2);
-  assert.deepEqual(state.map((item) => item.clientId), [first.clientId, second.clientId]);
+  assert.deepEqual(state.map((item) => item.clientId), [second.clientId, first.clientId]);
 });
 
 test("stale bootstrap and cursor snapshots cannot erase or resurrect a local pending row", () => {
@@ -155,10 +156,12 @@ test("one targeted failure and retry never restores or removes sibling successes
   let state = items;
   state = upsertMemoryMessage(state, confirm(items[2], 2));
   state = upsertMemoryMessage(state, { ...items[1], deliveryStatus: "failed" });
-  assert.deepEqual(state.map((item) => item.deliveryStatus), ["pending", "failed", "sent"]);
+  assert.deepEqual(state.map((item) => item.deliveryStatus), ["sent", "pending", "failed"]);
   state = upsertMemoryMessage(state, { ...items[1], deliveryStatus: "retrying" });
   state = upsertMemoryMessage(state, confirm(items[1], 1));
-  assert.deepEqual(state.map((item) => item.deliveryStatus), ["pending", "sent", "sent"]);
+  assert.equal(state.find((item) => item.clientId === items[0].clientId)?.deliveryStatus, "pending");
+  assert.equal(state.find((item) => item.clientId === items[1].clientId)?.deliveryStatus, "sent");
+  assert.equal(state.find((item) => item.clientId === items[2].clientId)?.deliveryStatus, "sent");
 });
 
 test("late failure and retry events cannot demote an already confirmed message", () => {
@@ -187,9 +190,9 @@ test("mixed text/media operations retain independent stable identities", () => {
   state = upsertMemoryMessage(state, confirm(textA, 1));
   state = upsertMemoryMessage(state, confirm(media, 2));
   assert.deepEqual(state.map(memoryMessageLogicalKey), [
-    textA.clientId,
+    textB.clientId,
     media.clientId,
-    textB.clientId
+    textA.clientId
   ]);
 });
 
@@ -198,9 +201,9 @@ test("confirming one row preserves unaffected sibling object references", () => 
   const second = message({ body: "B", clientId: "client-reference-b-000001", sequence: 2 });
   const third = message({ body: "C", clientId: "client-reference-c-000001", sequence: 3 });
   const state = upsertMemoryMessage([first, second, third], confirm(second, 2));
-  assert.equal(state[0], first);
-  assert.equal(state[2], third);
-  assert.notEqual(state[1], second);
+  assert.equal(state.find((item) => item.clientId === first.clientId), first);
+  assert.equal(state.find((item) => item.clientId === third.clientId), third);
+  assert.notEqual(state.find((item) => item.clientId === second.clientId), second);
 });
 
 test("serialized restart data reconciles by persisted clientId without a session side map", () => {

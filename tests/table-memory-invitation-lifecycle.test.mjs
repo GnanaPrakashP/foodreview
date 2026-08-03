@@ -6,6 +6,10 @@ const migration = readFileSync(
   "supabase/migrations/202607220001_table_memory_invitation_lifecycle.sql",
   "utf8"
 );
+const inviteJoinFix = readFileSync(
+  "supabase/migrations/202608020003_fix_memory_invite_join_conflict.sql",
+  "utf8"
+);
 const createRoute = readFileSync("app/api/mobile/memories/route.ts", "utf8");
 const participantRoute = readFileSync("app/api/mobile/memories/[roomId]/participants/route.ts", "utf8");
 const responseRoute = readFileSync("app/api/mobile/memories/invites/[inviteId]/respond/route.ts", "utf8");
@@ -40,6 +44,16 @@ test("invite acceptance is receiver-scoped, atomic, and blocked-user aware", () 
   assert.match(migration, /update public\.shared_memory_invites/);
   assert.match(migration, /set search_path = public/);
   assert.match(migration, /revoke insert, update, delete on table public\.shared_memory_invites from authenticated/);
+});
+
+test("invite acceptance uses an unambiguous idempotent member conflict target", () => {
+  const namedConflictTargets = inviteJoinFix.match(
+    /on conflict on constraint shared_memory_members_room_id_user_name_key do nothing/g
+  ) ?? [];
+  assert.equal(namedConflictTargets.length, 2);
+  assert.doesNotMatch(inviteJoinFix, /on conflict \(room_id, user_name\) do nothing/);
+  assert.match(inviteJoinFix, /invite\.receiver_name = v_receiver/);
+  assert.match(inviteJoinFix, /public\.shared_memory_room_has_blocked_relationship\(v_invite\.room_id, v_receiver\)/);
 });
 
 test("creation uses the fail-closed server contract and sends private notification copy", () => {

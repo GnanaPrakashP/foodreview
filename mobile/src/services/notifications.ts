@@ -1,5 +1,6 @@
 import Constants from "expo-constants";
 import type * as ExpoNotifications from "expo-notifications";
+import { shouldSuppressForegroundMemoryPush } from "@/services/memoryActiveSurface";
 import { Platform } from "react-native";
 import { authorizedJson } from "@/api/client";
 import { supabase } from "@/api/supabase";
@@ -68,13 +69,18 @@ export async function loadNotificationsModule(): Promise<NotificationsModule | n
     .then((Notifications) => {
       if (!notificationHandlerConfigured) {
         Notifications.setNotificationHandler({
-          handleNotification: async () => ({
-            shouldPlaySound: false,
-            shouldSetBadge: true,
-            shouldShowAlert: true,
-            shouldShowBanner: true,
-            shouldShowList: true
-          })
+          handleNotification: async (notification) => {
+            const suppress = shouldSuppressForegroundMemoryPush(
+              notification.request.content.data as Record<string, unknown> | undefined
+            );
+            return {
+              shouldPlaySound: false,
+              shouldSetBadge: !suppress,
+              shouldShowAlert: !suppress,
+              shouldShowBanner: !suppress,
+              shouldShowList: !suppress
+            };
+          }
         });
         notificationHandlerConfigured = true;
       }
@@ -170,6 +176,20 @@ export async function registerForPushNotifications(username: string): Promise<Pu
       return { granted: false, reason: "Push token table is missing." };
     }
     throw new Error(error.message);
+  }
+
+  // A refreshed token supersedes every prior token for this installation.
+  // Upsert the replacement first so a cleanup failure can only cause a safe,
+  // temporary duplicate row; the durable push-job dedupe still prevents a
+  // duplicate notification for a single activity.
+  const { error: cleanupError } = await supabase
+    .from("push_tokens")
+    .delete()
+    .eq("user_name", username)
+    .eq("install_id", installId)
+    .neq("expo_push_token", token.data);
+  if (cleanupError && !isMissingPushTokensTable(cleanupError)) {
+    throw new Error(cleanupError.message);
   }
 
   return { granted: true, token: token.data };

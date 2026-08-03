@@ -22,12 +22,13 @@ request lifetime and must keep polling independently of user traffic.
 3. Required secret values:
 
    ```text
-   APP_MIGRATION_HEAD=202607290001
+   APP_MIGRATION_HEAD=202608030003
    APP_RELEASE=<the deployed git SHA>
    NEXT_PUBLIC_SUPABASE_URL=<production project URL>
    NEXT_PUBLIC_SUPABASE_ANON_KEY=<production publishable/anon key>
    SUPABASE_SERVICE_ROLE_KEY=<production service-role key>
    MEDIA_WORKER_SECRET=<the same 32+ character value used by the worker container>
+   API_RATE_LIMIT_HMAC_SECRET=<a separate server-only 32+ character HMAC secret>
    GOOGLE_API_KEY=<server-only Vision/Video Intelligence key>
    SENTRY_DSN=<production server/worker DSN>
    ```

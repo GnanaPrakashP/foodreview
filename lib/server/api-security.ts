@@ -233,6 +233,14 @@ function hmacSecret() {
   return secret;
 }
 
+/**
+ * Readiness probe for services that depend on privacy-preserving audit hashes.
+ * It deliberately exposes only configuration presence, never the secret.
+ */
+export function securityIdentifierHashingConfigured() {
+  return hmacSecret() !== null;
+}
+
 export function hashSecurityIdentifier(kind: string, value: string) {
   const secret = hmacSecret();
   if (!secret) return null;

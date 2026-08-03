@@ -5,6 +5,11 @@ const LOCAL_DELIVERY_STATES = new Set([
   "processing_failed",
   "rejected",
   "pending",
+  "waiting_for_connection",
+  "sending",
+  "failed_retryable",
+  "failed_permanent",
+  "cancelled",
   "retrying",
   "failed"
 ]);
@@ -31,8 +36,18 @@ export function memoryMessageLogicalKey(message) {
 }
 
 export function compareMemoryMessages(first, second) {
+  const firstConfirmed = Boolean(memoryMessageServerId(first));
+  const secondConfirmed = Boolean(memoryMessageServerId(second));
+  // A newly composed local row belongs at the live edge while it is unacked.
+  // Once both rows are acknowledged, every client converges on server commit
+  // order. This prevents an old offline compose time from impersonating an old
+  // server message without making the optimistic bubble appear far above the
+  // send gesture.
+  if (firstConfirmed !== secondConfirmed) return firstConfirmed ? -1 : 1;
+  const firstOrderTime = first.serverCreatedAt || memoryMessageClientCreatedAt(first);
+  const secondOrderTime = second.serverCreatedAt || memoryMessageClientCreatedAt(second);
   return (
-    validTime(memoryMessageClientCreatedAt(first)) - validTime(memoryMessageClientCreatedAt(second)) ||
+    validTime(firstOrderTime) - validTime(secondOrderTime) ||
     (Number.isSafeInteger(first.clientSequence) ? first.clientSequence : Number.MAX_SAFE_INTEGER) -
       (Number.isSafeInteger(second.clientSequence) ? second.clientSequence : Number.MAX_SAFE_INTEGER) ||
     String(first.clientOrderKey || memoryMessageLogicalKey(first)).localeCompare(
@@ -99,7 +114,7 @@ export function mergeMemoryMessage(existing, incoming) {
       : Number.isSafeInteger(incoming.clientSequence)
         ? incoming.clientSequence
         : null,
-    createdAt: clientCreatedAt,
+    createdAt: serverCreatedAt || clientCreatedAt,
     deliveryStatus: deliveryAfterMerge(existing, incoming),
     serverCreatedAt,
     serverId

@@ -1,8 +1,10 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  BackHandler,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -15,7 +17,11 @@ import {
 } from "react-native";
 import { MemoryComposerHeader } from "@/components/memories/MemoryComposerHeader";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
-import { useCreateMemoryStopMutation } from "@/hooks/useMemories";
+import {
+  useCreateMemoryStopMutation,
+  useMemoryRoomQuery,
+  useUpdateMemoryStopMutation
+} from "@/hooks/useMemories";
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import {
   autocompletePlaces,
@@ -27,12 +33,19 @@ import { fontStyles, spacing } from "@/theme";
 type ThemeColors = ReturnType<typeof themeColorsFor>;
 
 export default function AddMemoryPlaceScreen() {
-  const params = useLocalSearchParams<{ id: string }>();
+  const params = useLocalSearchParams<{ id: string; stopId?: string }>();
   const router = useRouter();
   const roomId = typeof params.id === "string" ? params.id : "";
+  const stopId = typeof params.stopId === "string" ? params.stopId : "";
+  const editing = Boolean(stopId);
   const { themeColors } = useThemePreference();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   const createStop = useCreateMemoryStopMutation(roomId);
+  const updateStop = useUpdateMemoryStopMutation(roomId);
+  const room = useMemoryRoomQuery(editing ? roomId : "");
+  const canonicalStop = editing
+    ? room.data?.stops.find((stop) => stop.id === stopId) ?? null
+    : null;
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([]);
   const [searching, setSearching] = useState(false);
@@ -40,6 +53,23 @@ export default function AddMemoryPlaceScreen() {
   const [searchError, setSearchError] = useState("");
   const [selectedPlace, setSelectedPlace] = useState<PlaceSuggestion | null>(null);
   const sessionToken = useRef(createPlacesSessionToken());
+  const hydratedStopId = useRef("");
+  const originalPlace = useRef<PlaceSuggestion | null>(null);
+  const pending = createStop.isPending || updateStop.isPending;
+
+  useEffect(() => {
+    if (!editing || !canonicalStop || hydratedStopId.current === canonicalStop.id) return;
+    const initialPlace: PlaceSuggestion = {
+      mainText: canonicalStop.name,
+      placeId: canonicalStop.placeId ?? "",
+      secondaryText: canonicalStop.note ?? "",
+      text: [canonicalStop.name, canonicalStop.note].filter(Boolean).join(", ")
+    };
+    hydratedStopId.current = canonicalStop.id;
+    originalPlace.current = initialPlace;
+    setSelectedPlace(initialPlace);
+    setQuery(initialPlace.mainText);
+  }, [canonicalStop, editing]);
 
   useEffect(() => {
     const input = query.trim();
@@ -77,17 +107,8 @@ export default function AddMemoryPlaceScreen() {
     };
   }, [query, selectedPlace]);
 
-  const close = useCallback(() => {
-    Keyboard.dismiss();
-    if (router.canGoBack()) {
-      router.back();
-      return;
-    }
-    router.replace({ pathname: "/memories/[id]", params: { id: roomId } });
-  }, [roomId, router]);
-
   function selectPlace(suggestion: PlaceSuggestion) {
-    if (createStop.isPending) return;
+    if (pending) return;
     setSelectedPlace(suggestion);
     setQuery(suggestion.mainText);
     setSuggestions([]);
@@ -96,19 +117,29 @@ export default function AddMemoryPlaceScreen() {
     Keyboard.dismiss();
   }
 
-  const canAdd = Boolean(roomId && selectedPlace) && !createStop.isPending;
+  const dirty = editing && originalPlace.current
+    ? selectedPlace?.mainText.trim() !== originalPlace.current.mainText.trim() ||
+      selectedPlace?.secondaryText.trim() !== originalPlace.current.secondaryText.trim() ||
+      selectedPlace?.placeId !== originalPlace.current.placeId
+    : Boolean(selectedPlace);
+  const canAdd = Boolean(roomId && selectedPlace && (!editing || dirty)) && !pending;
 
   async function addPlace() {
     if (!canAdd || !selectedPlace) return;
     try {
-      await createStop.mutateAsync({
+      const placeInput = {
         name: selectedPlace.mainText.trim(),
         note: selectedPlace.secondaryText.trim() || undefined,
         // Kept so the Table card can open this exact venue in Maps rather than
         // running a text search over the two display lines.
         placeId: selectedPlace.placeId || undefined,
-        stopType: "other"
-      });
+        stopType: canonicalStop?.stopType ?? "other" as const
+      };
+      if (editing) {
+        await updateStop.mutateAsync({ ...placeInput, stopId });
+      } else {
+        await createStop.mutateAsync(placeInput);
+      }
       Keyboard.dismiss();
       router.back();
     } catch {
@@ -116,18 +147,47 @@ export default function AddMemoryPlaceScreen() {
     }
   }
 
+  const closeWithoutSaving = useCallback(() => {
+    Keyboard.dismiss();
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace({ pathname: "/memories/[id]", params: { id: roomId } });
+  }, [roomId, router]);
+
+  const requestClose = useCallback(() => {
+    if (pending) return;
+    if (!dirty) {
+      closeWithoutSaving();
+      return;
+    }
+    Alert.alert("Discard changes?", "Your place changes have not been saved.", [
+      { style: "cancel", text: "Keep editing" },
+      { onPress: closeWithoutSaving, style: "destructive", text: "Discard" }
+    ]);
+  }, [closeWithoutSaving, dirty, pending]);
+
+  useFocusEffect(useCallback(() => {
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      requestClose();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [requestClose]));
+
   const hasSearchableQuery = query.trim().length >= 2;
 
   return (
     <Screen padded={false} style={styles.screen}>
       <MemoryComposerHeader
         actionDisabled={!canAdd}
-        actionLabel={createStop.isPending ? "Adding…" : "Add"}
+        actionLabel={pending ? (editing ? "Updating…" : "Adding…") : (editing ? "Update" : "Add")}
         actionVariant="boxed"
         onAction={() => void addPlace()}
-        onClose={close}
+        onClose={requestClose}
         showDivider={false}
-        title=""
+        title={editing ? "Edit place" : ""}
       />
 
       <KeyboardAvoidingView
@@ -140,7 +200,7 @@ export default function AddMemoryPlaceScreen() {
             autoCapitalize="words"
             autoCorrect={false}
             autoFocus
-            editable={!createStop.isPending}
+            editable={!pending}
             onChangeText={(value) => {
               setQuery(value);
               setSelectedPlace(null);
@@ -190,7 +250,7 @@ export default function AddMemoryPlaceScreen() {
                 <Pressable
                   accessibilityLabel={`Select ${suggestion.mainText}`}
                   accessibilityRole="button"
-                  disabled={createStop.isPending}
+                  disabled={pending}
                   key={suggestion.placeId}
                   onPressIn={() => selectPlace(suggestion)}
                   style={({ pressed }) => [styles.resultRow, pressed && styles.resultRowPressed]}
@@ -209,8 +269,8 @@ export default function AddMemoryPlaceScreen() {
           </ScrollView>
         ) : null}
 
-        {createStop.error ? (
-          <Text style={styles.createError}>{createStop.error.message}</Text>
+        {createStop.error || updateStop.error ? (
+          <Text style={styles.createError}>{(createStop.error ?? updateStop.error)?.message}</Text>
         ) : null}
       </KeyboardAvoidingView>
     </Screen>

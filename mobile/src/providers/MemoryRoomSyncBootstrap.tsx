@@ -53,7 +53,10 @@ export function MemoryRoomSyncBootstrap() {
         exact: true,
         queryKey: memoryKeys.list
       });
-      await syncLoadedMemoryRoomCaches(queryClient, { force: true });
+      await syncLoadedMemoryRoomCaches(queryClient, {
+        force: true,
+        recoverOutbox: runtime.isOnline
+      });
     };
     syncQueueRef.current = syncQueueRef.current
       .then(synchronize, synchronize)

@@ -1,6 +1,6 @@
-import { apiBaseUrl, apiUrl } from "@/api/config";
+import { apiUrl } from "@/api/config";
 import { authorizedApiHeaders, authorizedJson, MobileApiError } from "@/api/client";
-import { createRequestId, getInstallId } from "@/services/installIdentity";
+import { createRequestId } from "@/services/installIdentity";
 import { supabase } from "@/api/supabase";
 import { MEMORY_TEXT_MAX_LENGTH } from "@/constants/memoryLimits";
 import { MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS } from "@/constants/memoryMediaPolicy";
@@ -60,6 +60,7 @@ import {
   readOfflineMemorySummaries,
   saveOfflineMemoryMediaPage,
   saveOfflineMemoryMessagePage,
+  saveOfflineMemoryOutboxMessage,
   saveOfflineMemoryPhoto,
   saveOfflineMemoryRoom,
   saveOfflineMemorySummaries
@@ -68,6 +69,7 @@ import { assertValidMemoryMediaAssets } from "@/services/memoryMediaValidation";
 import { getCurrentUserProfile } from "@/services/profiles";
 import { getActiveCacheGeneration, isCacheGenerationActive } from "@/security/cacheOwnership";
 import { runCursorSync } from "@/services/memorySyncRunner";
+import { createMemoryRoomIdempotencyCoordinator } from "@/services/memoryRoomCreateIdempotency";
 import type { MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary, MemoryStop, MemoryStopType } from "@/types/models";
 
 export const MEMORY_CHAT_PRELOAD_LIMIT = 50;
@@ -80,6 +82,7 @@ const MEMORY_SYNC_MAX_PAGES_PER_CHUNK = 500;
 const memoryRoomSyncFlights = new Map<string, Promise<MemoryRoomSyncResult>>();
 const memoryMediaRenewFlights = new Map<string, Promise<MemoryPhoto>>();
 const memoryRoomOverviewVersions = new Map<string, number>();
+const memoryRoomCreateIdempotency = createMemoryRoomIdempotencyCoordinator({ createKey: createRequestId });
 const MEMORY_MEDIA_RENEW_SAFETY_MS = 30_000;
 
 type MemoryRoomSyncResult = {
@@ -223,19 +226,15 @@ export type UpdateMemoryStopInput = {
   name?: string;
   stopType?: MemoryStopType;
   note?: string | null;
+  placeId?: string | null;
   position?: number;
 };
 
 export type SetMemoryDishRatingInput = {
+  clientMutationId: string;
+  clientSequence: number;
   dishId: string;
   rating: number;
-  roomId: string;
-};
-
-type MemoryActivityNotificationInput = {
-  idempotencyKey?: string;
-  kind: "message" | "media" | "dish";
-  preview?: string;
   roomId: string;
 };
 
@@ -277,6 +276,9 @@ type MemoryRoomSummaryRow = {
   timeline_date?: string | null;
   title: string | null;
   unread_count: number | string;
+  unread_chat_count?: number | string | null;
+  unread_media_count?: number | string | null;
+  unread_dish_count?: number | string | null;
   visit_date: string | null;
 };
 
@@ -405,6 +407,9 @@ function mapMemorySummaryRow(row: MemoryRoomSummaryRow): MemoryRoomSummary {
     dishCount: numericCount(row.dish_count),
     messageCount: numericCount(row.message_count),
     unreadCount: numericCount(row.unread_count),
+    unreadChatCount: numericCount(row.unread_chat_count ?? row.unread_count),
+    unreadMediaCount: numericCount(row.unread_media_count),
+    unreadDishCount: numericCount(row.unread_dish_count),
     latestMessage: row.latest_message,
     latestActivityAt: row.latest_activity_at,
     createdAt: row.created_at
@@ -443,28 +448,6 @@ async function signMemoryPhotoRows(rows: MemoryPhotoRow[]) {
   return rows.map((row) => {
     const signedUrl = row.storage_path ? urls.get(row.storage_path) : null;
     return signedUrl ? { ...row, public_url: signedUrl, signed_url_expires_at: signedUrlExpiresAt } : row;
-  });
-}
-
-async function notifyMemoryRoomActivity(input: MemoryActivityNotificationInput) {
-  if (!apiBaseUrl) return;
-
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  if (!token) return;
-
-  await fetch(apiUrl("/api/mobile/memories/notify"), {
-    body: JSON.stringify({
-      kind: input.kind,
-      roomId: input.roomId
-    }),
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-      "Idempotency-Key": input.idempotencyKey ?? createRequestId(),
-      "X-FoodReview-Install-Id": await getInstallId()
-    },
-    method: "POST"
   });
 }
 
@@ -944,26 +927,31 @@ export async function createMemoryRoom(input: CreateMemoryRoomInput): Promise<Cr
   const occasionConfidence = Math.max(0, Math.min(Number(input.occasionConfidence ?? 0), 1));
   const themeKey = input.themeKey?.trim() || getOccasionTheme(occasionType).id;
 
-  return authorizedJson<CreateMemoryRoomResult>(
+  const requestBody = {
+    area,
+    occasion: input.occasion?.trim() || null,
+    occasionConfidence,
+    occasionConfirmedByUser: input.occasionConfirmedByUser === true,
+    occasionType,
+    participantUsernames: participants,
+    restaurantId,
+    restaurantName,
+    sourcePostId,
+    themeKey,
+    visitDate: input.visitDate?.trim() || null
+  };
+  const idempotency = memoryRoomCreateIdempotency.begin(requestBody);
+  const result = await authorizedJson<CreateMemoryRoomResult>(
     "/api/mobile/memories",
     {
-      body: JSON.stringify({
-        area,
-        occasion: input.occasion?.trim() || null,
-        occasionConfidence,
-        occasionConfirmedByUser: input.occasionConfirmedByUser === true,
-        occasionType,
-        participantUsernames: participants,
-        restaurantId,
-        restaurantName,
-        sourcePostId,
-        themeKey,
-        visitDate: input.visitDate?.trim() || null
-      }),
+      body: JSON.stringify(requestBody),
+      headers: { "Idempotency-Key": idempotency.idempotencyKey },
       method: "POST"
     },
     { action: "creating a Table Memory", timeoutMs: 15_000 }
   );
+  memoryRoomCreateIdempotency.complete(idempotency);
+  return result;
 }
 
 export async function updateMemoryRoomOccasion(roomId: string, input: UpdateMemoryRoomOccasionInput): Promise<UpdateMemoryRoomOccasionInput> {
@@ -1414,9 +1402,13 @@ async function recoverPendingMemoryMessages(
   let room = current;
   const pendingMessages = room.messages
     .filter((message) => (
-      message.deliveryStatus === "pending" &&
+      (message.deliveryStatus === "pending" ||
+        message.deliveryStatus === "waiting_for_connection" ||
+        message.deliveryStatus === "sending" ||
+        message.deliveryStatus === "failed_retryable") &&
       message.attachments.length === 0 &&
       Boolean(message.clientId) &&
+      (message.sendAttemptCount ?? 0) < 5 &&
       !isForegroundMemoryMessageSend(message.clientId)
     ))
     .slice(0, 10);
@@ -1425,43 +1417,63 @@ async function recoverPendingMemoryMessages(
     if (!isCacheGenerationActive(ownerGeneration)) break;
     const clientId = pendingMessage.clientId;
     if (!clientId) continue;
-    try {
-      const result = await addMemoryMessage(
-        roomId,
-        pendingMessage.body,
-        pendingMessage.replyToMessageId,
-        clientId,
-        pendingMessage.clientCreatedAt,
-        pendingMessage.clientSequence,
-        pendingMessage.clientOrderKey
-      );
-      const sentMessage: MemoryMessage = {
-        ...pendingMessage,
-        authorName: result.author_name,
-        body: result.body,
-        clientId: result.client_id ?? clientId,
-        clientCreatedAt: result.client_created_at ?? pendingMessage.clientCreatedAt,
-        clientSequence: result.client_sequence == null ? pendingMessage.clientSequence : Number(result.client_sequence),
-        clientOrderKey: result.client_order_key ?? pendingMessage.clientOrderKey,
-        createdAt: result.client_created_at ?? pendingMessage.clientCreatedAt,
-        deliveryStatus: "sent",
-        editedAt: result.edited_at ?? null,
-        id: result.id,
-        serverId: result.id,
-        serverCreatedAt: result.created_at,
-        replyToMessageId: result.reply_to_message_id ?? null,
-        roomId: result.room_id
+    let candidate = pendingMessage;
+    while ((candidate.sendAttemptCount ?? 0) < 5 && isCacheGenerationActive(ownerGeneration)) {
+      const sendAttemptCount = (candidate.sendAttemptCount ?? 0) + 1;
+      const sendingMessage: MemoryMessage = {
+        ...candidate,
+        deliveryStatus: "sending",
+        firstSendAttemptAt: candidate.firstSendAttemptAt ?? new Date().toISOString(),
+        sendAttemptCount
       };
-      room = {
-        ...room,
-        messages: upsertMemoryMessage(room.messages, sentMessage)
-      };
-      if (isCacheGenerationActive(ownerGeneration)) {
-        await commitOfflineMemoryOutboxMessage(clientId, sentMessage);
+      room = { ...room, messages: upsertMemoryMessage(room.messages, sendingMessage) };
+      await saveOfflineMemoryOutboxMessage(clientId, sendingMessage);
+      try {
+        const result = await addMemoryMessage(
+          roomId,
+          pendingMessage.body,
+          pendingMessage.replyToMessageId,
+          clientId,
+          pendingMessage.clientCreatedAt,
+          pendingMessage.clientSequence,
+          pendingMessage.clientOrderKey
+        );
+        const sentMessage: MemoryMessage = {
+          ...sendingMessage,
+          authorName: result.author_name,
+          body: result.body,
+          clientId: result.client_id ?? clientId,
+          clientCreatedAt: result.client_created_at ?? pendingMessage.clientCreatedAt,
+          clientSequence: result.client_sequence == null ? pendingMessage.clientSequence : Number(result.client_sequence),
+          clientOrderKey: result.client_order_key ?? pendingMessage.clientOrderKey,
+          createdAt: result.created_at,
+          deliveryStatus: "sent",
+          editedAt: result.edited_at ?? null,
+          id: result.id,
+          serverId: result.id,
+          serverCreatedAt: result.created_at,
+          replyToMessageId: result.reply_to_message_id ?? null,
+          roomId: result.room_id
+        };
+        room = { ...room, messages: upsertMemoryMessage(room.messages, sentMessage) };
+        if (isCacheGenerationActive(ownerGeneration)) {
+          await commitOfflineMemoryOutboxMessage(clientId, sentMessage);
+        }
+        break;
+      } catch {
+        const exhausted = sendAttemptCount >= 5;
+        candidate = {
+          ...sendingMessage,
+          deliveryStatus: exhausted ? "failed_retryable" : "waiting_for_connection"
+        };
+        room = { ...room, messages: upsertMemoryMessage(room.messages, candidate) };
+        await saveOfflineMemoryOutboxMessage(clientId, candidate);
+        if (exhausted) break;
+        await new Promise<void>((resolve) => setTimeout(
+          resolve,
+          Math.min(750 * (2 ** (sendAttemptCount - 1)), 6_000)
+        ));
       }
-    } catch {
-      // Keep the durable pending row. A later reconnect/refetch retries the same
-      // idempotency key, so an ambiguous response cannot create a duplicate.
     }
   }
 
@@ -1520,7 +1532,7 @@ async function recoverPendingMemoryMessages(
         clientSequence: result.message.client_sequence == null
           ? pendingMessage.clientSequence
           : Number(result.message.client_sequence),
-        createdAt: result.message.client_created_at ?? pendingMessage.clientCreatedAt,
+        createdAt: result.message.created_at,
         deliveryStatus: "sent",
         editedAt: result.message.edited_at ?? null,
         id: result.message.id,
@@ -1869,6 +1881,25 @@ export async function markMemoryRoomRead(roomId: string, readAt?: string) {
   };
 }
 
+export async function markMemoryRoomActivityRead(
+  roomId: string,
+  surface: "media" | "dishes",
+  readAt?: string
+) {
+  const target = readAt ?? new Date().toISOString();
+  if (!Number.isFinite(Date.parse(target))) throw new Error("Invalid memory read position");
+  const { data, error } = await supabase.rpc("mark_shared_memory_activity_read_v1", {
+    p_read_at: target,
+    p_room_id: roomId,
+    p_surface: surface
+  });
+  if (error) {
+    if (isMissingMemoryReadsTable(error)) return { ok: false as const, skipped: true as const };
+    throw memoryTablesError(error);
+  }
+  return { ok: true as const, readAt: typeof data === "string" ? data : target };
+}
+
 export async function addMemoryParticipant(roomId: string, rawUsername: string) {
   const username = normalizeUsername(rawUsername);
   if (!username) throw new Error("Username is required");
@@ -1969,12 +2000,6 @@ export async function addMemoryMessage(
     },
     { action: "sending a message", timeoutMs: 12_000 }
   );
-  void notifyMemoryRoomActivity({
-    idempotencyKey,
-    kind: "message",
-    preview: trimmed,
-    roomId
-  }).catch(() => {});
   return payload.message;
 }
 
@@ -2084,47 +2109,48 @@ export async function createMemoryStop(input: CreateMemoryStopInput): Promise<Me
   if (error) throw memoryTablesError(error);
   if (!data) throw new Error("Could not add this place");
   bumpMemoryRoomOverviewVersion(input.roomId);
-  void notifyMemoryRoomActivity({ kind: "dish", preview: name, roomId: input.roomId }).catch(() => {});
   return mapMemoryStop(data, { [createdBy]: createdBy });
 }
 
-export async function updateMemoryStop(input: UpdateMemoryStopInput): Promise<{ ok: true }> {
+export async function updateMemoryStop(input: UpdateMemoryStopInput): Promise<MemoryStop> {
   const username = await myUsername();
-  await assertMemoryRoomMember(input.roomId, username);
-  const patch: Record<string, unknown> = {};
-  if (input.name !== undefined) {
-    const name = input.name.trim();
-    if (!name) throw new Error("Stop name is required");
-    patch.name = name;
-  }
-  if (input.stopType !== undefined) patch.stop_type = input.stopType;
-  if (input.note !== undefined) patch.note = input.note?.trim() || null;
-  if (input.position !== undefined) patch.position = input.position;
-  if (Object.keys(patch).length === 0) return { ok: true };
-
-  const { error } = await supabase
-    .from("shared_memory_stops")
-    .update(patch)
-    .eq("id", input.stopId)
-    .eq("room_id", input.roomId);
-
-  if (isMissingMemoryStopsSchema(error)) throw new Error(STOPS_MIGRATION_HINT);
-  if (error) throw memoryTablesError(error);
+  const name = input.name?.trim() ?? "";
+  if (!name) throw new Error("Stop name is required");
+  const payload = await authorizedJson<{ stop: MemoryStopRow }>(
+    `/api/mobile/memories/${encodeURIComponent(input.roomId)}/entities`,
+    {
+      body: JSON.stringify({
+        kind: "place",
+        name,
+        note: input.note?.trim() ?? "",
+        placeId: input.placeId?.trim() ?? "",
+        stopId: input.stopId,
+        stopType: input.stopType ?? "other"
+      }),
+      method: "PATCH"
+    },
+    { action: "updating a room place", timeoutMs: 20_000 }
+  );
   bumpMemoryRoomOverviewVersion(input.roomId);
-  return { ok: true };
+  return mapMemoryStop(payload.stop, { [username]: username });
 }
 
 export async function deleteMemoryStop(roomId: string, stopId: string): Promise<{ ok: true }> {
-  const username = await myUsername();
-  await assertMemoryRoomMember(roomId, username);
-  const { error } = await supabase
-    .from("shared_memory_stops")
-    .delete()
-    .eq("id", stopId)
-    .eq("room_id", roomId);
+  await authorizedJson<{ ok: true }>(
+    `/api/mobile/memories/${encodeURIComponent(roomId)}/entities`,
+    { body: JSON.stringify({ entityId: stopId, kind: "place" }), method: "DELETE" },
+    { action: "deleting a room place", timeoutMs: 20_000 }
+  );
+  bumpMemoryRoomOverviewVersion(roomId);
+  return { ok: true };
+}
 
-  if (isMissingMemoryStopsSchema(error)) throw new Error(STOPS_MIGRATION_HINT);
-  if (error) throw memoryTablesError(error);
+export async function deleteMemoryDish(roomId: string, dishId: string): Promise<{ ok: true }> {
+  await authorizedJson<{ ok: true }>(
+    `/api/mobile/memories/${encodeURIComponent(roomId)}/entities`,
+    { body: JSON.stringify({ entityId: dishId, kind: "dish" }), method: "DELETE" },
+    { action: "deleting a room dish", timeoutMs: 20_000 }
+  );
   bumpMemoryRoomOverviewVersion(roomId);
   return { ok: true };
 }
@@ -2172,17 +2198,10 @@ export async function addMemoryDish(input: AddMemoryDishInput) {
       throw memoryTablesError(ratingError);
     }
   }
-  void notifyMemoryRoomActivity({
-    kind: "dish",
-    preview: dishName,
-    roomId: input.roomId
-  }).catch(() => {});
   return { ok: true };
 }
 
 export async function setMemoryDishRating(input: SetMemoryDishRatingInput) {
-  const ratedBy = await myUsername();
-  await assertMemoryRoomMember(input.roomId, ratedBy);
   const rating = Number(input.rating);
 
   if (!input.dishId) throw new Error("Dish is required");
@@ -2190,22 +2209,21 @@ export async function setMemoryDishRating(input: SetMemoryDishRatingInput) {
     throw new Error("Rating must be from 1 to 5");
   }
 
-  const now = new Date().toISOString();
-  const { error } = await supabase
-    .from("shared_memory_dish_ratings")
-    .upsert({
-      dish_id: input.dishId,
-      rated_by: ratedBy,
-      rating,
-      room_id: input.roomId,
-      updated_at: now
-    }, { onConflict: "dish_id,rated_by" });
-
-  if (isMissingMemoryDishRatingsTable(error)) {
-    throw new Error("Run mobile/supabase/migrations/202606160001_shared_memory_dish_ratings.sql before rating memory dishes.");
-  }
-  if (error) throw memoryTablesError(error);
-  return { ok: true };
+  return authorizedJson<{ ok: true; rating?: MemoryDishRatingRow }>(
+    `/api/mobile/memories/${encodeURIComponent(input.roomId)}/entities`,
+    {
+      body: JSON.stringify({
+        clientMutationId: input.clientMutationId,
+        clientSequence: input.clientSequence,
+        dishId: input.dishId,
+        kind: "rating",
+        rating
+      }),
+      headers: { "Idempotency-Key": input.clientMutationId },
+      method: "PUT"
+    },
+    { action: "rating a room dish", timeoutMs: 20_000 }
+  );
 }
 
 export async function addMemoryPhoto(input: AddMemoryPhotoInput): Promise<AddMemoryPhotoResult> {
@@ -2297,11 +2315,6 @@ export async function addMemoryPhoto(input: AddMemoryPhotoInput): Promise<AddMem
   );
   await completeRecoveredMediaUploads(uploaded.map((item) => item.recoveryId));
   assets.forEach((asset) => asset.onUploadProgress?.(1));
-  void notifyMemoryRoomActivity({
-    kind: "media",
-    preview: messageBody || `${uploaded.length} media item${uploaded.length === 1 ? "" : "s"}`,
-    roomId: input.roomId
-  }).catch(() => {});
   return result;
 }
 
@@ -2394,11 +2407,6 @@ async function addLegacyMemoryAudio(input: {
       }));
     }
     input.assets.forEach((asset) => asset.onUploadProgress?.(1));
-    void notifyMemoryRoomActivity({
-      kind: "media",
-      preview: input.body || "Voice message",
-      roomId: input.roomId
-    }).catch(() => {});
     return { message, photos };
   } catch (error) {
     try {

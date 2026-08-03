@@ -637,9 +637,11 @@ export async function processMediaAsset(
       durationMs: Date.now() - downloadStarted,
       jobId: lease.job.id,
       mediaType: asset.media_type,
+      sourceBytes: buffer.byteLength,
       workerId: lease.workerId
     });
   }
+  const validationStarted = Date.now();
   if (buffer.byteLength !== asset.original_file_size_bytes || buffer.byteLength <= 0) {
     throw new Error("corrupt_source");
   }
@@ -650,8 +652,26 @@ export async function processMediaAsset(
     expectedMediaType: asset.media_type,
     expectedMimeType: asset.original_mime_type
   });
+  if (lease) {
+    recordMediaWorkerEvent("source_validation_completed", {
+      durationMs: Date.now() - validationStarted,
+      jobId: lease.job.id,
+      mediaType: asset.media_type,
+      workerId: lease.workerId
+    });
+  }
   await lease?.checkpoint("after_source_validation");
+  const moderationStarted = Date.now();
   await ensureMediaAssetModeration(admin, asset, buffer, lease);
+  if (lease) {
+    recordMediaWorkerEvent("moderation_completed", {
+      attempt: lease.job.attempts,
+      durationMs: Date.now() - moderationStarted,
+      jobId: lease.job.id,
+      mediaType: asset.media_type,
+      workerId: lease.workerId
+    });
+  }
   return asset.media_type === "image"
     ? processImageAsset(admin, asset, buffer, lease, config)
     : processVideoAsset(admin, asset, buffer, lease, config);
@@ -685,7 +705,10 @@ async function ensureMediaAssetModeration(
   }
 
   const operatorHash = hashSecurityIdentifier("media-moderation", "shared-media-worker");
-  if (!operatorHash) throw new Error("moderation_service_unavailable");
+  // This hash is an internal audit identity, not the moderation provider.
+  // Keep the failure retryable, but report the actual missing worker
+  // configuration so operators do not chase a nonexistent provider outage.
+  if (!operatorHash) throw new Error("media_audit_hash_unavailable");
   const { data: changed, error } = await admin.rpc("apply_media_moderation_action", {
     p_action: moderation.status,
     p_asset_id: asset.id,
@@ -838,7 +861,14 @@ async function processVideoAsset(
   try {
     await writeFile(inputPath, buffer);
     if (buffer.byteLength * 3 > config.maxTempBytes) throw new Error("temporary_disk_limit_exceeded");
+    const probeStarted = Date.now();
     const probe = await ffprobe(inputPath, config.ffprobeTimeoutMs);
+    if (lease) recordMediaWorkerEvent("video_probe_completed", {
+      durationMs: Date.now() - probeStarted,
+      jobId: lease.job.id,
+      mediaType: asset.media_type,
+      workerId: lease.workerId
+    });
     if (probe.width * probe.height > MEDIA_VIDEO_MAX_PIXELS) throw new Error("dimensions_exceeded");
     await lease?.checkpoint("after_video_probe");
     const maxDurationMs = MAX_VIDEO_DURATION_MS[asset.surface] ?? 0;
@@ -871,12 +901,26 @@ async function processVideoAsset(
       ...(asset.audio_policy === "strip" ? ["-an"] : ["-c:a", "aac", "-b:a", "128k"]),
       outputPath
     ];
+    const transcodeStarted = Date.now();
     await runCommand("ffmpeg", ffmpegArgs, config.ffmpegTimeoutMs, "temporary_ffmpeg_resource_failure");
+    if (lease) recordMediaWorkerEvent("video_transcode_completed", {
+      durationMs: Date.now() - transcodeStarted,
+      jobId: lease.job.id,
+      mediaType: asset.media_type,
+      workerId: lease.workerId
+    });
     await lease?.checkpoint("after_canonical_creation");
     // Poster from ~1s in, clamped to the clip's midpoint so sub-second
     // videos still yield a frame.
     const posterSeekSeconds = Math.max(0, Math.min(1, (probe.durationMs ?? 2000) / 2000)).toFixed(2);
+    const posterStarted = Date.now();
     await runCommand("ffmpeg", ["-y", "-ss", posterSeekSeconds, "-i", outputPath, "-frames:v", "1", posterPath], config.ffmpegTimeoutMs, "temporary_ffmpeg_resource_failure");
+    if (lease) recordMediaWorkerEvent("video_poster_completed", {
+      durationMs: Date.now() - posterStarted,
+      jobId: lease.job.id,
+      mediaType: asset.media_type,
+      workerId: lease.workerId
+    });
     await lease?.checkpoint("after_poster_creation");
     const poster = await readFile(posterPath);
     const outputStats = await stat(outputPath);

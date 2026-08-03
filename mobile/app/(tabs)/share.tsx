@@ -2,7 +2,6 @@ import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useEvent } from "expo";
 import { useVideoPlayer, VideoView } from "expo-video";
-import * as VideoThumbnails from "expo-video-thumbnails";
 import { useFocusEffect, useRouter } from "expo-router";
 import { ArrowLeft, Bookmark, Camera, ChevronRight, Crop, Globe, Heart, Lock, MapPin, MessageCircle, PenLine, Play, Plus, Share2, Star, Store, Tag, UserPlus, Users, Utensils, Volume2, VolumeX, X } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -20,6 +19,7 @@ import { getOccasionTheme } from "@/features/occasions/occasionThemes";
 import type { OccasionType } from "@/features/occasions/occasionTypes";
 import { POST_BITE_ASPECT_RATIO } from "@/constants/postCaptureLayout";
 import type { MediaCropRect } from "@/services/mediaPipeline";
+import { createLocalVideoPoster } from "@/services/localVideoPoster";
 import { consumePendingPostCaptures, consumePostComposerReset, subscribeToPostCaptures } from "@/services/postCaptureSession";
 import type { MemoryCapturedMediaInput } from "@/types/memoryMediaCapture";
 import {
@@ -167,7 +167,7 @@ export default function ShareScreen() {
       return;
     }
     try {
-      const still = await VideoThumbnails.getThumbnailAsync(media.uri, { time: 0 });
+      const still = await createLocalVideoPoster(media.uri);
       setCropEdit({ index, uri: still.uri });
     } catch {
       setImageError("Could not open video framing. Try again.");
@@ -1653,7 +1653,7 @@ function VideoThumbnail({ uri }: { uri: string }) {
   // surface doesn't clip to the small rounded tile and bleeds behind the strip.
   useEffect(() => {
     let cancelled = false;
-    VideoThumbnails.getThumbnailAsync(uri, { time: 0, quality: 0.6 })
+    createLocalVideoPoster(uri)
       .then((result) => {
         if (!cancelled) setThumbUri(result.uri);
       })

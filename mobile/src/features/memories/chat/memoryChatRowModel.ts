@@ -54,14 +54,19 @@ export type ChatRowViewModel = {
   createdAt: string;
   deliveryState:
     | "failed"
+    | "failed_permanent"
+    | "failed_retryable"
     | "pending"
     | "processing"
     | "processing_delayed"
     | "processing_failed"
     | "rejected"
     | "retrying"
+    | "sending"
     | "sent"
-    | "uploading";
+    | "uploading"
+    | "waiting_for_connection"
+    | "cancelled";
   direction: ChatRowDirection;
   grouping: ChatGroupingMetadata;
   itemType: ChatRowItemType;

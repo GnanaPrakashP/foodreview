@@ -798,6 +798,7 @@ type PersistentMediaUploadInput = UploadPostMediaAssetInput & {
 
 async function uploadPersistentMediaAsset(input: PersistentMediaUploadInput): Promise<UploadedMediaAsset> {
   const mediaKind = resolveMediaKind(input);
+  const preparationStarted = Date.now();
   input.onUploadProgress?.(0.03);
   const sourceUri = await stageAccountFile(input.uri, `${input.surface}-upload-source`);
   if (input.surface === "memory") await input.onSourceStaged?.(sourceUri);
@@ -828,6 +829,11 @@ async function uploadPersistentMediaAsset(input: PersistentMediaUploadInput): Pr
   const preparedUri = record?.preparedUri ?? downscaled?.uri ?? sourceUri;
   const mimeType = record?.mimeType ?? downscaled?.mimeType ?? defaultMimeType(mediaKind, input.mimeType);
   const fileSizeBytes = await fileByteLengthFromUri(preparedUri);
+  recordMobileFlow("media.local_preparation", Date.now() - preparationStarted, "success", {
+    fileSizeBytes,
+    mediaKind,
+    surface: input.surface
+  });
   input.onUploadProgress?.(0.1);
   const extension = extensionFor(mimeType, mediaKind);
   if (!record) {
@@ -855,6 +861,7 @@ async function uploadPersistentMediaAsset(input: PersistentMediaUploadInput): Pr
   }
 
   if (!record.assetId) {
+    const intentStarted = Date.now();
     const intent = await createMediaUploadIntent({
       audioPolicy: record.audioPolicy,
       cropRect: input.surface === "memory" ? defaultCropRect(mediaKind, "memory") : input.cropRect,
@@ -886,6 +893,10 @@ async function uploadPersistentMediaAsset(input: PersistentMediaUploadInput): Pr
       uploadBucket: intent.uploadBucket,
       uploadPath: intent.uploadPath
     });
+    recordMobileFlow("media.upload_intent", Date.now() - intentStarted, "success", {
+      mediaKind,
+      surface: input.surface
+    });
   }
   input.onUploadProgress?.(0.18);
 
@@ -893,6 +904,7 @@ async function uploadPersistentMediaAsset(input: PersistentMediaUploadInput): Pr
   const assetId = record.assetId;
   const uploadPath = record.uploadPath;
   if (record.state === "prepared" || record.state === "intent_created") {
+    const sourceUploadStarted = Date.now();
     await uploadFileUri({
       bucket: record.uploadBucket,
       contentType: record.mimeType,
@@ -901,12 +913,24 @@ async function uploadPersistentMediaAsset(input: PersistentMediaUploadInput): Pr
       path: record.uploadPath,
       uri: preparedUri
     });
+    const sourceUploadDurationMs = Math.max(1, Date.now() - sourceUploadStarted);
+    recordMobileFlow("media.direct_storage_upload", sourceUploadDurationMs, "success", {
+      fileSizeBytes,
+      mediaKind,
+      surface: input.surface,
+      throughputKbps: Math.round((fileSizeBytes * 8) / sourceUploadDurationMs)
+    });
     record = updatePendingMediaUpload(record.localUploadId, { state: "source_uploaded" });
   }
   input.onUploadProgress?.(0.9);
 
   if (!["processing", "processing_delayed", "processing_failed", "ready"].includes(record.state)) {
+    const finalizeStarted = Date.now();
     await finalizeMediaUpload({ assetId, uploadPath });
+    recordMobileFlow("media.upload_completion_ack", Date.now() - finalizeStarted, "success", {
+      mediaKind,
+      surface: input.surface
+    });
     record = updatePendingMediaUpload(record.localUploadId, { state: "processing" });
   }
   if (record.state === "processing_failed") {
@@ -922,7 +946,12 @@ async function uploadPersistentMediaAsset(input: PersistentMediaUploadInput): Pr
       state: "processing"
     });
   }
+  const processingStarted = Date.now();
   const { canonical } = await waitForReadyMedia(record, input.onUploadProgress);
+  recordMobileFlow("media.hosted_processing", Date.now() - processingStarted, "success", {
+    mediaKind,
+    surface: input.surface
+  });
   input.onUploadProgress?.(1);
 
   return {

@@ -6,6 +6,7 @@ import { notificationKeys } from "@/hooks/useNotifications";
 import { useSessionStore } from "@/stores/sessionStore";
 import { getActiveCacheGeneration, isCacheGenerationActive } from "@/security/cacheOwnership";
 import { safeProtectedPath } from "@/navigation/authNavigationPolicy";
+import { recordMobileFlow } from "@/observability/mobileTelemetry";
 
 type NotificationResponseLike = {
   notification: {
@@ -40,17 +41,39 @@ export function PushNotificationBootstrap() {
     if (!username || !userId || registeredUsernameRef.current === userId) return;
 
     let alive = true;
-    registerForPushNotifications(username)
+    let tokenSubscription: { remove: () => void } | null = null;
+    const register = () => registerForPushNotifications(username)
       .then((result) => {
         if (!alive) return;
+        const reasonCode = result.granted
+          ? "registered"
+          : result.reason.includes("permission")
+            ? "permission_denied"
+            : result.reason.includes("project id")
+              ? "project_id_missing"
+              : result.reason.includes("build")
+                ? "native_module_unavailable"
+                : "registration_unavailable";
+        recordMobileFlow("push.registration", 0, result.granted ? "success" : "failure", { reasonCode });
         if (result.granted) registeredUsernameRef.current = userId;
-      })
+      });
+    register()
       .catch(() => {
         if (alive) registeredUsernameRef.current = null;
       });
+    loadNotificationsModule().then((Notifications) => {
+      if (!alive || !Notifications) return;
+      tokenSubscription = Notifications.addPushTokenListener(() => {
+        registeredUsernameRef.current = null;
+        void register().catch(() => {
+          if (alive) registeredUsernameRef.current = null;
+        });
+      });
+    }).catch(() => {});
 
     return () => {
       alive = false;
+      tokenSubscription?.remove();
     };
   }, [userId, username]);
 

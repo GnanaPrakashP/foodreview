@@ -15,7 +15,7 @@ import { PenLine, Star, Utensils } from "lucide-react-native";
 import { Image } from "expo-image";
 import { StatusBar } from "expo-status-bar";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { getThumbnailAsync, type VideoThumbnailsResult } from "expo-video-thumbnails";
+import type { VideoThumbnailsResult } from "expo-video-thumbnails";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
@@ -75,6 +75,7 @@ import Reanimated, {
 } from "react-native-reanimated";
 import { MemoryCenterState } from "@/components/memories/MemoryDetailSections";
 import { discardTemporaryAccountFile, stageAccountFile } from "@/services/accountFileStore";
+import { createLocalVideoPoster } from "@/services/localVideoPoster";
 import { getActiveCacheGeneration, isCacheGenerationActive } from "@/security/cacheOwnership";
 import { registerSensitiveResourceCleanup } from "@/security/sensitiveResourceRegistry";
 import {
@@ -167,15 +168,19 @@ import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
 import { useThemePreference } from "@/hooks/useThemePreference";
 import { useDrivenKeyboardHeight } from "@/hooks/useDrivenKeyboardHeight";
 import { useReducedMotionPreference } from "@/hooks/useReducedMotionPreference";
+import { captureMobileError } from "@/observability/mobileTelemetry";
 import { useRuntimeActivity } from "@/performance/runtimeActivity";
 import {
   useAddMemoryMessageMutation,
   useAddMemoryParticipantMutation,
   useAddMemoryPhotoMutation,
   useDeleteMemoryItemsMutation,
+  useDeleteMemoryDishMutation,
+  useDeleteMemoryStopMutation,
   useDismissFailedMemoryMessage,
   useEditMemoryMessageMutation,
   useLeaveMemoryRoomMutation,
+  useMarkMemoryRoomActivityReadMutation,
   useMarkMemoryRoomReadMutation,
   useMemoryMediaPagesQuery,
   useMemoryMessagePagesQuery,
@@ -194,6 +199,7 @@ import {
   settleMemoryRoomMedia
 } from "@/services/memoryMediaSettle.mjs";
 import { resolveMemoryUploadProgress } from "@/services/memoryUploadProgress.mjs";
+import { setActiveMemorySurface } from "@/services/memoryActiveSurface";
 import {
   memoryChatPlacementDiagnosticsEnabled,
   recordMemoryChatPlacement,
@@ -286,6 +292,7 @@ type ChatListScrollRef = {
   getLayout?: (index: number) => unknown;
 };
 type MemoryActionTarget =
+  | { type: "dish"; value: MemoryDish }
   | { type: "message"; value: MemoryMessage }
   | { type: "photo"; value: MemoryPhoto };
 type MemoryReactionState = Record<string, Record<string, Array<string | number>>>;
@@ -649,6 +656,12 @@ function memoryActionKey(target: MemoryActionTarget) {
 }
 
 function findMemoryActionTarget(data: MemoryRoom, key: string): MemoryActionTarget | null {
+  if (key.startsWith("dish:")) {
+    const id = key.replace("dish:", "");
+    const dish = data.dishes.find((item) => item.id === id);
+    return dish ? { type: "dish", value: dish } : null;
+  }
+
   if (key.startsWith("message:")) {
     const id = key.replace("message:", "");
     const message = data.messages.find((item) => item.id === id);
@@ -834,6 +847,7 @@ function memoryChatItemType(
 
 function memoryChatActionTarget(message: MemoryChatMainMessage | undefined): MemoryActionTarget | null {
   if (!message) return null;
+  if (message.memoryDish) return { type: "dish", value: message.memoryDish };
   if (message.memoryMessage) return { type: "message", value: message.memoryMessage };
   if (message.memoryPhoto) return { type: "photo", value: message.memoryPhoto };
   return null;
@@ -864,12 +878,14 @@ function canEditMemoryMessage(message: MemoryMessage, myUsername: string) {
 function canDiscardMemoryMessage(message: MemoryMessage, myUsername: string) {
   return (
     message.authorName === myUsername &&
+    !memoryMessageServerId(message) &&
     message.deliveryStatus !== undefined &&
     message.deliveryStatus !== "sent"
   );
 }
 
 function canDeleteMemoryActionTarget(target: MemoryActionTarget, myUsername: string) {
+  if (target.type === "dish") return true;
   if (target.type === "message") {
     return (
       target.value.authorName === myUsername &&
@@ -887,12 +903,14 @@ function canDeleteMemoryActionTarget(target: MemoryActionTarget, myUsername: str
 // failure pill under a bubble whose own tile still said it was uploading.
 function hasMemoryDeliveryStrip(status: MemoryMessage["deliveryStatus"]) {
   return status === "failed" ||
+    status === "failed_retryable" ||
+    status === "failed_permanent" ||
     status === "processing_failed" ||
     status === "rejected";
 }
 
 function canRetryMemoryDelivery(status: MemoryMessage["deliveryStatus"]) {
-  return status === "failed" || status === "processing_failed";
+  return status === "failed" || status === "failed_retryable" || status === "processing_failed";
 }
 
 // Same grouping rule the vendor uses for corner rounding: consecutive
@@ -1736,7 +1754,6 @@ function MemoryChatMainSurface({
   onSendAudio,
   onToggleSelection,
   onToggleReaction,
-  pendingDishId,
   replyingToMessage,
   roomId,
   resolvedTheme,
@@ -1793,7 +1810,6 @@ function MemoryChatMainSurface({
   onSendAudio: (asset: AddMemoryMediaAsset) => Promise<void>;
   onToggleSelection: (target: MemoryActionTarget) => void;
   onToggleReaction: (messageId: string, emoji: string) => void;
-  pendingDishId?: string | null;
   replyingToMessage: MemoryMessage | null;
   roomId: string;
   resolvedTheme: "dark" | "light";
@@ -3248,17 +3264,32 @@ function MemoryChatMainSurface({
     const dish = messageProps.currentMessage?.memoryDish;
     if (dish) {
       const mine = String(messageProps.user?._id ?? "") === String(messageProps.currentMessage?.user?._id ?? "");
+      const actionTarget: MemoryActionTarget = { type: "dish", value: dish };
+      const selected = selectedItemKeys.includes(memoryActionKey(actionTarget));
+      const rowMessage = messageProps.currentMessage;
       return (
-        <DishTimelineCard
-          dish={dish}
-          groupPosition="single"
-          mine={mine}
-          onOpenDish={() => onOpenDish(dish.id)}
-          onRateDish={(rating) => onRateDish(dish.id, rating)}
-          pending={pendingDishId === dish.id}
-          rowStyle={styles.chatMainDishPollRow}
-          showSenderDetails={Boolean(messageProps.currentMessage?.showSenderDetails)}
-        />
+        <MemoryChatPlacementRow
+          layoutGeneration={layoutGeneration}
+          onLongPress={() => handleRowLongPress(rowMessage)}
+          onPress={selectionMode ? () => handleRowPress(rowMessage) : undefined}
+          rowKey={`dish:${dish.id}`}
+          style={[styles.chatMainRowSelectionFrame, selected && styles.chatMainRowSelectedBackground]}
+        >
+          <DishTimelineCard
+            dish={dish}
+            groupPosition="single"
+            mine={mine}
+            onLongPress={() => handleRowLongPress(rowMessage)}
+            onOpenDish={() => onOpenDish(dish.id)}
+            onPress={selectionMode ? () => handleRowPress(rowMessage) : undefined}
+            onRateDish={(rating) => onRateDish(dish.id, rating)}
+            rowStyle={styles.chatMainDishPollRow}
+            selected={selected}
+            selectionGestureOwnedByParent
+            selectionMode={selectionMode}
+            showSenderDetails={Boolean(messageProps.currentMessage?.showSenderDetails)}
+          />
+        </MemoryChatPlacementRow>
       );
     }
 
@@ -3355,7 +3386,7 @@ function MemoryChatMainSurface({
         ) : null}
       </MemoryChatPlacementRow>
     );
-  }, [handleRowLongPress, handleRowPress, journeySession, layoutGeneration, onCancelFailedMessage, onOpenDish, onRateDish, onRetryFailedMessage, pendingDishId, selectedItemKeys, selectionMode]);
+  }, [handleRowLongPress, handleRowPress, journeySession, layoutGeneration, onCancelFailedMessage, onOpenDish, onRateDish, onRetryFailedMessage, selectedItemKeys, selectionMode]);
 
   // The long-press action menu used to arrive through the vendor's reactions
   // wrapper, so `reactions.isEnabled` had to stay true purely to get a
@@ -5251,15 +5282,26 @@ export default function MemoryDetailScreen() {
   const addMessage = useAddMemoryMessageMutation(roomId);
   const addPhoto = useAddMemoryPhotoMutation(roomId);
   const rateDish = useSetMemoryDishRatingMutation(roomId);
+  const flushPendingDishRatings = rateDish.flushPending;
+  const deleteDish = useDeleteMemoryDishMutation(roomId);
+  const deleteStop = useDeleteMemoryStopMutation(roomId);
   const editMessage = useEditMemoryMessageMutation(roomId);
   const deleteItems = useDeleteMemoryItemsMutation(roomId);
   const dismissFailedMessage = useDismissFailedMemoryMessage(roomId);
   const markRead = useMarkMemoryRoomReadMutation(roomId);
+  const markMediaRead = useMarkMemoryRoomActivityReadMutation(roomId, "media");
+  const markDishesRead = useMarkMemoryRoomActivityReadMutation(roomId, "dishes");
   const leaveRoom = useLeaveMemoryRoomMutation(roomId);
   const requestCircleAccess = useRequestCircleAccessMutation();
   const sessionProfile = useSessionStore((state) => state.profile);
   const myUsername = sessionProfile?.username ?? "";
   const myDisplayName = sessionProfile?.displayName || myUsername;
+  useEffect(() => {
+    if (!runtime.isOnline) return;
+    void flushPendingDishRatings().catch((error) => {
+      captureMobileError("memory.dish_rating_recovery_failed", error, { roomId });
+    });
+  }, [flushPendingDishRatings, roomId, runtime.isOnline]);
   const addMessageMutateAsyncRef = useRef(addMessage.mutateAsync);
   addMessageMutateAsyncRef.current = addMessage.mutateAsync;
   const markReadMutateRef = useRef(markRead.mutate);
@@ -5385,6 +5427,7 @@ export default function MemoryDetailScreen() {
     if (requestedTab) requestRoomMode(requestedTab);
   }, [requestRoomMode, roomId]));
   const handleRoomTabPress = useCallback((nextMode: RoomMode) => {
+    setActiveStopActionId(null);
     recordMemoryRoomJourney(journeySession, "TAB_PRESS", {
       fromTab: mode,
       tab: nextMode
@@ -5454,6 +5497,7 @@ export default function MemoryDetailScreen() {
   // Dish whose detail / "who rated" sheet is open (null = closed). Held by id so
   // realtime rating updates flow into the open sheet via the live `data.dishes`.
   const [detailDishId, setDetailDishId] = useState<string | null>(null);
+  const [activeStopActionId, setActiveStopActionId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const messageDraftRef = useRef("");
   const [editingMessage, setEditingMessage] = useState<MemoryMessage | null>(null);
@@ -6072,6 +6116,7 @@ export default function MemoryDetailScreen() {
           clientId,
           clientOrderKey,
           clientSequence,
+          deferUntilOnline: !runtime.isOnline,
           replyToMessageId: outgoingReply ? memoryMessageServerId(outgoingReply) ?? outgoingReply.id : null
         }).then(() => {
           recordMemoryRoomJourney(journeySession, "MESSAGE_CONFIRMED", {
@@ -6149,6 +6194,7 @@ export default function MemoryDetailScreen() {
       clientId,
       clientOrderKey,
       clientSequence,
+      deferUntilOnline: !runtime.isOnline,
       replacesMessageId: target.id,
       replyToMessageId: target.replyToMessageId
     }).catch(() => {
@@ -6161,7 +6207,7 @@ export default function MemoryDetailScreen() {
     // Gated on the message never having landed, NOT on the recovery pill being
     // visible: the pill only renders for outright failures, while the same
     // cancel is what rescues a send stuck mid-upload from the selection bar.
-    if (target.deliveryStatus === "sent") return;
+    if (target.deliveryStatus === "sent" || memoryMessageServerId(target)) return;
     if (!target.deliveryStatus) return;
     if (target.attachments.length > 0 && target.clientId) {
       void cancelPendingMemoryUploadBatch(roomId, target.clientId).catch(() => undefined);
@@ -6300,6 +6346,9 @@ export default function MemoryDetailScreen() {
     const photoIds = queuedKeys
       .filter((key) => key.startsWith("photo:"))
       .map((key) => key.replace("photo:", ""));
+    const dishIds = queuedKeys
+      .filter((key) => key.startsWith("dish:"))
+      .map((key) => key.replace("dish:", ""));
 
     try {
       if (editingMessage && messageIds.includes(editingMessage.id)) cancelEditMessage();
@@ -6308,7 +6357,13 @@ export default function MemoryDetailScreen() {
         selectedItemKeysRef.current = [];
         setSelectedItemKeys([]);
       }
-      void deleteItems.mutateAsync({ messageIds, photoIds }).catch((error) => {
+      const deleteRequests: Array<Promise<unknown>> = dishIds.map((dishId) => (
+        deleteDish.mutateAsync(dishId)
+      ));
+      if (messageIds.length > 0 || photoIds.length > 0) {
+        deleteRequests.push(deleteItems.mutateAsync({ messageIds, photoIds }));
+      }
+      void Promise.all(deleteRequests).catch((error) => {
         if (clearSelection && selectedItemKeysRef.current.length === 0) {
           selectedItemKeysRef.current = queuedKeys;
           setSelectedItemKeys(queuedKeys);
@@ -6352,9 +6407,10 @@ export default function MemoryDetailScreen() {
     if (queuedKeys.length === 0) return;
     const messageCount = queuedKeys.filter((key) => key.startsWith("message:")).length;
     const photoCount = queuedKeys.filter((key) => key.startsWith("photo:")).length;
+    const dishCount = queuedKeys.filter((key) => key.startsWith("dish:")).length;
     const title = queuedKeys.length === 1
-      ? `Delete ${messageCount === 1 ? "message" : "media"}?`
-      : `Delete ${messageCount + photoCount} items?`;
+      ? `Delete ${dishCount === 1 ? "dish" : messageCount === 1 ? "message" : "media"}?`
+      : `Delete ${messageCount + photoCount + dishCount} items?`;
     confirmDeleteMemoryItemKeys(queuedKeys, {
       clearSelection: true,
       title
@@ -6416,6 +6472,34 @@ export default function MemoryDetailScreen() {
   function openAddPlace() {
     setFloatingAddMenuOpen(false);
     router.push({ pathname: "/memories/[id]/add-place", params: { id: roomId } });
+  }
+
+  function editMemoryStop(stop: MemoryStop) {
+    setActiveStopActionId(null);
+    router.push({
+      pathname: "/memories/[id]/add-place",
+      params: { id: roomId, stopId: stop.id }
+    });
+  }
+
+  function confirmDeleteMemoryStop(stop: MemoryStop) {
+    setActiveStopActionId(null);
+    Alert.alert(
+      "Delete place?",
+      `${stop.name} will be removed for everyone at the table.`,
+      [
+        { style: "cancel", text: "Cancel" },
+        {
+          onPress: () => {
+            void deleteStop.mutateAsync(stop.id).catch((error) => {
+              Alert.alert("Could not delete place", errorMessage(error) ?? "The place was restored. Try again.");
+            });
+          },
+          style: "destructive",
+          text: "Delete"
+        }
+      ]
+    );
   }
 
   function openPeopleAdd() {
@@ -6641,7 +6725,7 @@ export default function MemoryDetailScreen() {
       queryState: "mutating",
       tab: paneTabMode
     });
-    rateDish.mutate({ dishId, rating }, {
+    rateDish.mutate({ deferUntilOnline: !runtime.isOnline, dishId, rating }, {
       onError: () => {
         recordMemoryRoomJourney(journeySession, "DISH_MUTATION_FAILED", {
           queryState: "degraded",
@@ -6739,7 +6823,7 @@ export default function MemoryDetailScreen() {
   const projectedRoomData = mergedRoomData ?? room.data ?? null;
   const projectedSummaryUnreadCount = memoryRoomSummariesFromPages(
     queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list)
-  ).find((memory) => memory.id === projectedRoomData?.id)?.unreadCount;
+  ).find((memory) => memory.id === projectedRoomData?.id)?.unreadChatCount;
   const projectedUnreadCount = projectedRoomData
     ? projectedSummaryUnreadCount ??
       unreadChatMessageCount(projectedRoomData, myUsername)
@@ -6918,6 +7002,28 @@ export default function MemoryDetailScreen() {
     });
   }, [paneTabMode, projectedRoomData, queryClient, roomId]);
 
+  const currentRoomSummary = memoryRoomSummariesFromPages(
+    queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list)
+  ).find((memory) => memory.id === roomId);
+  const currentMediaUnread = currentRoomSummary?.unreadMediaCount ?? 0;
+  const currentDishUnread = currentRoomSummary?.unreadDishCount ?? 0;
+  useEffect(() => {
+    if (!runtime.isForeground || mode === "people") {
+      setActiveMemorySurface(null);
+      return;
+    }
+    setActiveMemorySurface({ roomId, surface: paneTabMode });
+    return () => setActiveMemorySurface(null);
+  }, [mode, paneTabMode, roomId, runtime.isForeground]);
+  useEffect(() => {
+    if (paneTabMode !== "media" || currentMediaUnread <= 0 || markMediaRead.isPending) return;
+    markMediaRead.mutate(undefined);
+  }, [currentMediaUnread, markMediaRead, paneTabMode]);
+  useEffect(() => {
+    if (paneTabMode !== "dishes" || currentDishUnread <= 0 || markDishesRead.isPending) return;
+    markDishesRead.mutate(undefined);
+  }, [currentDishUnread, markDishesRead, paneTabMode]);
+
   if (room.isLoading) {
     return (
       <MemoryRoomLoadingShell
@@ -6981,10 +7087,10 @@ export default function MemoryDetailScreen() {
   const floatingAddAvailable = !selectedMedia;
   const floatingAddVisible = mode === "overview" && floatingAddAvailable;
   const headerMode = mode === "people" ? "overview" : mode;
-  const summaryUnreadChatCount = memoryRoomSummariesFromPages(
-    queryClient.getQueryData<InfiniteData<MemoryRoomsPage>>(memoryKeys.list)
-  ).find((memory) => memory.id === data.id)?.unreadCount;
+  const summaryUnreadChatCount = currentRoomSummary?.unreadChatCount;
   const unreadChatCount = summaryUnreadChatCount ?? unreadChatMessageCount(data, myUsername);
+  const unreadMediaCount = currentRoomSummary?.unreadMediaCount ?? 0;
+  const unreadDishCount = currentRoomSummary?.unreadDishCount ?? 0;
 
   return (
     <Screen padded={false} style={styles.screenContent}>
@@ -7003,6 +7109,8 @@ export default function MemoryDetailScreen() {
         onViewPeople={openPeopleList}
         transitioning={mode === "people"}
         unreadChatCount={unreadChatCount}
+        unreadDishCount={unreadDishCount}
+        unreadMediaCount={unreadMediaCount}
       />
       <RoomKeyboardContainer chatMode={mode === "chat"}>
         <View
@@ -7022,8 +7130,13 @@ export default function MemoryDetailScreen() {
                   mounted={paneMounted("overview")}
                 >
                   <ItineraryPanelPane
+                    activeStopActionId={activeStopActionId}
                     initialScrollOffset={readMemoryRoomScrollOffset(scrollSessionRef.current, "overview")}
                     journeySession={journeySession}
+                    onActivateStopActions={setActiveStopActionId}
+                    onDeleteStop={confirmDeleteMemoryStop}
+                    onDismissStopActions={() => setActiveStopActionId(null)}
+                    onEditStop={editMemoryStop}
                     onScrollOffsetChange={captureTableScroll}
                     stops={data.stops}
                     themeCopy={roomOccasionTheme.copy}
@@ -7043,8 +7156,8 @@ export default function MemoryDetailScreen() {
                     collapsedComposerGeometry={collapsedComposerGeometry}
                     copyableSelectedMessage={copyableSelectedMessage}
                     discardableSelectedMessage={discardableSelectedMessage}
-                    deleteError={errorMessage(deleteItems.error)}
-                    deletePending={deleteItems.isPending}
+                    deleteError={errorMessage(deleteItems.error ?? deleteDish.error)}
+                    deletePending={deleteItems.isPending || deleteDish.isPending}
                     editableSelectedMessage={editableSelectedMessage}
                     editingMessage={editingMessage}
                     inputRef={messageInputRef}
@@ -7090,7 +7203,6 @@ export default function MemoryDetailScreen() {
                     onSendAudio={stableSendAudio}
                     onToggleSelection={stableToggleSelection}
                     onToggleReaction={stableToggleReaction}
-                    pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
                     replyingToMessage={replyingToMessage}
                     roomId={roomId}
                     resolvedTheme={resolvedTheme}
@@ -7134,7 +7246,6 @@ export default function MemoryDetailScreen() {
                     onOpenDish={setDetailDishId}
                     onRateDish={stableRateDish}
                     onScrollOffsetChange={captureDishesScroll}
-                    pendingDishId={rateDish.isPending ? rateDish.variables?.dishId ?? null : null}
                     themeCopy={roomOccasionTheme.copy}
                   />
                 </RoomPane>
@@ -7207,7 +7318,6 @@ export default function MemoryDetailScreen() {
         myUsername={myUsername}
         onClose={() => setDetailDishId(null)}
         onRateDish={stableRateDish}
-        pending={rateDish.isPending && rateDish.variables?.dishId === detailDishId}
       />
       {mode === "people" ? (
         <PeoplePanel
@@ -7474,7 +7584,9 @@ function RoomHeader({
   onViewPeople,
   pagerPosition,
   transitioning,
-  unreadChatCount
+  unreadChatCount,
+  unreadDishCount,
+  unreadMediaCount
 }: {
   activePaneIndex: SharedValue<number>;
   data: MemoryRoom;
@@ -7490,6 +7602,8 @@ function RoomHeader({
   pagerPosition: SharedValue<number>;
   transitioning: boolean;
   unreadChatCount: number;
+  unreadDishCount: number;
+  unreadMediaCount: number;
 }) {
   const roomTitle = data.title?.trim() || displayRestaurantName;
   const roomDateLabel = formatDisplayDate(data.visitDate ?? data.createdAt);
@@ -7657,6 +7771,8 @@ function RoomHeader({
           onChangeMode={onChangeMode}
           pagerPosition={pagerPosition}
           unreadChatCount={unreadChatCount}
+          unreadDishCount={unreadDishCount}
+          unreadMediaCount={unreadMediaCount}
         />
       </Reanimated.View>
     </Reanimated.View>
@@ -7672,13 +7788,17 @@ function RoomModeTabs({
   mode,
   onChangeMode,
   pagerPosition,
-  unreadChatCount
+  unreadChatCount,
+  unreadDishCount,
+  unreadMediaCount
 }: {
   activePaneIndex: SharedValue<number>;
   mode: RoomTabMode;
   onChangeMode: (mode: RoomMode) => void;
   pagerPosition: SharedValue<number>;
   unreadChatCount: number;
+  unreadDishCount: number;
+  unreadMediaCount: number;
 }) {
   // The pill is four equal flex tabs wide inside a header that is the window
   // width capped at ROOM_MAX_WIDTH, so its geometry is known at the FIRST
@@ -7733,7 +7853,15 @@ function RoomModeTabs({
             key={tab.mode}
             label={tab.label}
             onPress={() => onChangeMode(tab.mode)}
-            unreadCount={tab.mode === "chat" ? unreadChatCount : 0}
+            unreadCount={
+              tab.mode === "chat"
+                ? unreadChatCount
+                : tab.mode === "media"
+                  ? unreadMediaCount
+                  : tab.mode === "dishes"
+                    ? unreadDishCount
+                    : 0
+            }
           />
         ))}
       </View>
@@ -8220,7 +8348,6 @@ function ChatTimeline({
   onToggleReaction,
   lastReadAt,
   olderMessagesError,
-  pendingDishId,
   reactionPickerMessageId,
   reactions,
   scrollRef,
@@ -8259,7 +8386,6 @@ function ChatTimeline({
   onToggleReaction: (messageId: string, emoji: string) => void;
   lastReadAt: string | null;
   olderMessagesError?: string;
-  pendingDishId?: string | null;
   reactionPickerMessageId: string | null;
   reactions: MemoryReactionState;
   scrollRef: React.RefObject<FlatList<ChatTimelineRow> | null>;
@@ -8760,10 +8886,13 @@ function ChatTimeline({
           dish={item.value}
           groupPosition={item.groupPosition}
           mine={item.mine}
+          onLongPress={() => beginRowSelection({ type: "dish", value: item.value })}
           onOpenDish={() => openRowDish(item.value.id)}
+          onPress={() => toggleRowSelection({ type: "dish", value: item.value })}
           onRateDish={(rating) => rateRowDish(item.value.id, rating)}
-          pending={pendingDishId === item.value.id}
           rowStyle={rowStyle}
+          selected={selectedItemKeys.includes(`dish:${item.value.id}`)}
+          selectionMode={selectionMode}
           showSenderDetails={item.showSenderDetails}
         />
       );
@@ -8798,7 +8927,6 @@ function ChatTimeline({
     openRowMedia,
     openRowReactionPicker,
     participantNames,
-    pendingDishId,
     reactionPickerMessageId,
     reactions,
     rateRowDish,
@@ -9055,7 +9183,6 @@ function senderAccent(name: string) {
 }
 
 
-const VIDEO_THUMBNAIL_TIME_MS = 100;
 const VIDEO_THUMBNAIL_CACHE_LIMIT = 80;
 const videoThumbnailCache = new Map<string, VideoThumbnailsResult>();
 type VideoThumbnailImageSource = { uri: string };
@@ -9108,10 +9235,7 @@ function generateCachedVideoThumbnail(cacheKey: string, sourceUri: string) {
   if (pendingThumbnail) return pendingThumbnail;
 
   const ownerGeneration = getActiveCacheGeneration();
-  const promise = getThumbnailAsync(sourceUri, {
-    quality: 0.82,
-    time: VIDEO_THUMBNAIL_TIME_MS
-  })
+  const promise = createLocalVideoPoster(sourceUri)
     .then(async (nextThumbnail) => {
       if (!nextThumbnail) return null;
       const scopedThumbnail = {
@@ -9313,13 +9437,15 @@ function WebVideoThumbnailLayer({
 
 function UploadProgressOverlay({ progress }: { progress?: number | null }) {
   const normalizedProgress = Math.max(0, Math.min(progress ?? 0, 1));
-  const progressPercent = Math.round(normalizedProgress * 100);
-  // The transfer reports 1 as soon as the PUT finishes, but the send is not
-  // done — the server still has to process the media, and the row stays
-  // optimistic throughout. Sitting on "Uploading 100%" for that whole stretch
-  // claims something untrue, so the last phase says what is actually happening
-  // and drops the number, which has nothing left to count.
-  const complete = normalizedProgress >= 1;
+  // mediaPipeline maps preparation/intent work to 0..0.18, the direct storage
+  // PUT to 0.18..0.90 and worker polling to 0.90..1. Keep those stages visible
+  // instead of calling the entire operation "uploading".
+  const preparing = normalizedProgress < 0.18;
+  const processing = normalizedProgress >= 0.9;
+  const uploadFraction = preparing
+    ? 0
+    : Math.max(0, Math.min((normalizedProgress - 0.18) / 0.72, 1));
+  const progressPercent = Math.round(uploadFraction * 100);
   const ringSize = 44;
   const ringStroke = 3;
   const ringRadius = (ringSize - ringStroke) / 2;
@@ -9344,15 +9470,15 @@ function UploadProgressOverlay({ progress }: { progress?: number | null }) {
             r={ringRadius}
             stroke={ROOM_COLORS.cool}
             strokeDasharray={`${circumference} ${circumference}`}
-            strokeDashoffset={circumference * (1 - normalizedProgress)}
+            strokeDashoffset={circumference * (1 - (processing ? 1 : uploadFraction))}
             strokeLinecap="round"
             strokeWidth={ringStroke}
             transform={`rotate(-90 ${ringSize / 2} ${ringSize / 2})`}
           />
         </Svg>
-        {complete ? null : <Text style={styles.uploadProgressText}>{progressPercent}%</Text>}
+        {preparing || processing ? null : <Text style={styles.uploadProgressText}>{progressPercent}%</Text>}
       </View>
-      <Text style={styles.mediaPendingText}>{complete ? "Processing" : "Uploading"}</Text>
+      <Text style={styles.mediaPendingText}>{preparing ? "Preparing" : processing ? "Processing" : "Uploading"}</Text>
     </View>
   );
 }
@@ -9707,13 +9833,14 @@ function MessageBubbleMeta({
   status?: MemoryMessage["deliveryStatus"];
   time: string;
 }) {
-  const pending = status === "pending";
-  const sent = mine && !pending && status !== "failed";
+  const queued = status === "waiting_for_connection";
+  const pending = queued || status === "sending" || status === "pending" || status === "retrying";
+  const sent = mine && !pending && status !== "failed" && status !== "failed_retryable" && status !== "failed_permanent";
 
   return (
     <View style={[styles.messageMetaRow, mine && styles.messageMetaRowMine]}>
       <Text style={[styles.messageMetaTime, mine ? styles.messageMetaTimeMine : styles.messageMetaTimeOther]}>
-        {time}
+        {queued ? `Queued · ${time}` : time}
       </Text>
       {mine ? (
         <Ionicons
@@ -9831,8 +9958,10 @@ function MessageDeliveryState({
   status?: MemoryMessage["deliveryStatus"];
 }) {
   if (!hasMemoryDeliveryStrip(status)) return null;
-  const label = status === "failed"
+  const label = status === "failed" || status === "failed_retryable"
     ? "Not sent"
+    : status === "failed_permanent"
+      ? "Could not send"
     : status === "processing_failed"
       ? "Processing failed"
       : "Media was not accepted";
@@ -10073,6 +10202,8 @@ function MessageBubble({
             />
             {(
               message.deliveryStatus === "pending" ||
+              message.deliveryStatus === "waiting_for_connection" ||
+              message.deliveryStatus === "sending" ||
               message.deliveryStatus === "retrying" ||
               message.deliveryStatus === "uploading" ||
               message.deliveryStatus === "processing" ||
@@ -10288,19 +10419,27 @@ function DishTimelineCard({
   dish,
   groupPosition,
   mine,
+  onLongPress,
   onOpenDish,
+  onPress,
   onRateDish,
-  pending,
   rowStyle,
+  selected,
+  selectionGestureOwnedByParent = false,
+  selectionMode,
   showSenderDetails
 }: {
   dish: MemoryDish;
   groupPosition: MessageGroupPosition;
   mine: boolean;
+  onLongPress: () => void;
   onOpenDish: () => void;
+  onPress?: () => void;
   onRateDish: (rating: number) => void;
-  pending: boolean;
   rowStyle?: StyleProp<ViewStyle>;
+  selected: boolean;
+  selectionGestureOwnedByParent?: boolean;
+  selectionMode: boolean;
   showSenderDetails: boolean;
 }) {
   const bubbleCornerStyle = groupedBubbleCornerStyle(mine, groupPosition);
@@ -10309,7 +10448,10 @@ function DishTimelineCard({
   return (
     <MessageRow
       mine={mine}
+      onLongPress={!selectionGestureOwnedByParent && !selectionMode ? onLongPress : undefined}
+      onPress={!selectionGestureOwnedByParent && selectionMode ? onPress : undefined}
       rowStyle={rowStyle}
+      selected={selected}
       senderName={dish.addedByDisplayName}
       showSenderDetails={showSenderDetails}
       swipeEnabled={false}
@@ -10343,12 +10485,14 @@ function DishTimelineCard({
                 <Pressable
                   accessibilityLabel={`Rate ${dish.dishName} ${star} out of 5`}
                   accessibilityRole="button"
-                  accessibilityState={{ disabled: pending, selected: star <= myRating }}
-                  disabled={pending}
+                  accessibilityState={{ disabled: selectionMode, selected: star <= myRating }}
+                  delayLongPress={320}
+                  disabled={selectionMode}
                   hitSlop={6}
                   key={star}
+                  onLongPress={onLongPress}
                   onPress={() => onRateDish(star)}
-                  style={[styles.dishTimelineStarButton, pending && styles.dishYourStarButtonDisabled]}
+                  style={styles.dishTimelineStarButton}
                 >
                   <Star
                     size={24}
@@ -10370,7 +10514,10 @@ function DishTimelineCard({
             accessibilityHint="Opens dish details to see who rated"
             accessibilityLabel={`${dish.dishName}, ${dish.ratingCount === 0 ? "no ratings yet" : `rated ${formatMemoryDishRating(dish.averageRating)} by ${dish.ratingCount}`}`}
             accessibilityRole="button"
+            delayLongPress={320}
+            disabled={selectionMode}
             hitSlop={6}
+            onLongPress={onLongPress}
             onPress={onOpenDish}
             style={styles.dishTimelineFooter}
           >
@@ -10848,14 +10995,24 @@ function memoryDishRaterSummary(dish: MemoryDish) {
 }
 
 function ItineraryPanel({
+  activeStopActionId,
   initialScrollOffset,
   journeySession,
+  onActivateStopActions,
+  onDeleteStop,
+  onDismissStopActions,
+  onEditStop,
   onScrollOffsetChange,
   stops,
   topInset
 }: {
+  activeStopActionId: string | null;
   initialScrollOffset: number;
   journeySession: MemoryRoomJourneySession;
+  onActivateStopActions: (stopId: string) => void;
+  onDeleteStop: (stop: MemoryStop) => void;
+  onDismissStopActions: () => void;
+  onEditStop: (stop: MemoryStop) => void;
   onScrollOffsetChange: (offset: number) => void;
   stops: MemoryStop[];
   themeCopy: OccasionTheme["copy"];
@@ -10867,6 +11024,7 @@ function ItineraryPanel({
     "overview",
     onScrollOffsetChange
   );
+  const preserveActionsThroughTouchEndRef = useRef(false);
   const topPadding = topInset != null ? topInset + 10 : TABLE_HEADER_CLEARANCE;
   const bottomPadding = spacing.xl + 92;
   const isEmpty = stops.length === 0;
@@ -10910,6 +11068,13 @@ function ItineraryPanel({
       data={orderedStops}
       initialNumToRender={ITINERARY_INITIAL_RENDER_COUNT}
       keyExtractor={(stop) => stop.id}
+      ListFooterComponent={activeStopActionId ? (
+        <Pressable
+          accessibilityLabel="Close place actions"
+          onPress={onDismissStopActions}
+          style={styles.stopActionsDismissArea}
+        />
+      ) : null}
       ListHeaderComponent={(
         <>
           <View style={styles.tablePostActionRow}>
@@ -10931,13 +11096,32 @@ function ItineraryPanel({
       onMomentumScrollBegin={scrollDiagnostics.begin}
       onMomentumScrollEnd={scrollDiagnostics.settle}
       onScroll={scrollDiagnostics.capture}
-      onScrollBeginDrag={scrollDiagnostics.begin}
+      onScrollBeginDrag={() => {
+        onDismissStopActions();
+        scrollDiagnostics.begin();
+      }}
       onScrollEndDrag={scrollDiagnostics.settle}
+      onTouchEnd={() => {
+        if (preserveActionsThroughTouchEndRef.current) {
+          preserveActionsThroughTouchEndRef.current = false;
+          return;
+        }
+        if (activeStopActionId) onDismissStopActions();
+      }}
       removeClippedSubviews={Platform.OS === "android"}
       renderItem={({ index, item }) => (
         <ItineraryStopRow
+          actionsVisible={activeStopActionId === item.id}
           isFirstStop={index === 0}
           isLastStop={index === orderedStops.length - 1}
+          menuOpen={Boolean(activeStopActionId)}
+          onActivateActions={() => {
+            preserveActionsThroughTouchEndRef.current = true;
+            onActivateStopActions(item.id);
+          }}
+          onDelete={() => onDeleteStop(item)}
+          onDismissActions={onDismissStopActions}
+          onEdit={() => onEditStop(item)}
           stop={item}
         />
       )}
@@ -10973,12 +11157,24 @@ function openMemoryStopInMaps(stop: MemoryStop) {
 }
 
 const ItineraryStopRow = memo(function ItineraryStopRow({
+  actionsVisible,
   isFirstStop,
   isLastStop,
+  menuOpen,
+  onActivateActions,
+  onDelete,
+  onDismissActions,
+  onEdit,
   stop
 }: {
+  actionsVisible: boolean;
   isFirstStop: boolean;
   isLastStop: boolean;
+  menuOpen: boolean;
+  onActivateActions: () => void;
+  onDelete: () => void;
+  onDismissActions: () => void;
+  onEdit: () => void;
   stop: MemoryStop;
 }) {
   return (
@@ -10995,7 +11191,15 @@ const ItineraryStopRow = memo(function ItineraryStopRow({
         accessibilityHint="Opens this place in Maps"
         accessibilityLabel={stop.note ? `${stop.name}, ${stop.note}` : stop.name}
         accessibilityRole="button"
-        onPress={() => openMemoryStopInMaps(stop)}
+        delayLongPress={320}
+        onLongPress={onActivateActions}
+        onPress={() => {
+          if (menuOpen) {
+            onDismissActions();
+            return;
+          }
+          openMemoryStopInMaps(stop);
+        }}
         style={({ pressed }) => [
           styles.stopCard,
           styles.stopTimelineCard,
@@ -11011,12 +11215,45 @@ const ItineraryStopRow = memo(function ItineraryStopRow({
               </Text>
             ) : null}
           </View>
-          <Ionicons
-            color={ROOM_COLORS.muted}
-            name="open-outline"
-            size={16}
-            style={styles.stopOpenIcon}
-          />
+          {actionsVisible ? (
+            <View accessibilityLabel="Place actions" style={styles.stopActions}>
+              <Pressable
+                accessibilityLabel={`Edit ${stop.name}`}
+                accessibilityRole="button"
+                hitSlop={5}
+                onPress={(event) => {
+                  event.stopPropagation();
+                  onEdit();
+                }}
+                onTouchEnd={(event) => event.stopPropagation()}
+                style={({ pressed }) => [styles.stopActionButton, pressed && styles.stopActionButtonPressed]}
+              >
+                <Ionicons color={ROOM_COLORS.cool} name="create-outline" size={16} />
+                <Text style={styles.stopActionText}>Edit</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel={`Delete ${stop.name}`}
+                accessibilityRole="button"
+                hitSlop={5}
+                onPress={(event) => {
+                  event.stopPropagation();
+                  onDelete();
+                }}
+                onTouchEnd={(event) => event.stopPropagation()}
+                style={({ pressed }) => [styles.stopActionButton, pressed && styles.stopActionButtonPressed]}
+              >
+                <Ionicons color={ROOM_COLORS.danger} name="trash-outline" size={16} />
+                <Text style={[styles.stopActionText, styles.stopActionDeleteText]}>Delete</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <Ionicons
+              color={ROOM_COLORS.muted}
+              name="open-outline"
+              size={16}
+              style={styles.stopOpenIcon}
+            />
+          )}
         </View>
       </Pressable>
     </View>
@@ -11027,14 +11264,12 @@ const DishesPanelRow = memo(function DishesPanelRow({
   dish,
   journeySession,
   onOpenDish,
-  onRateDish,
-  pending
+  onRateDish
 }: {
   dish: MemoryDish;
   journeySession: MemoryRoomJourneySession;
   onOpenDish: (dishId: string) => void;
   onRateDish: (dishId: string, rating: number) => void;
-  pending: boolean;
 }) {
   const ratingValue = dish.averageRating;
   const raterAvatars = dish.ratings.slice(0, 4);
@@ -11114,12 +11349,11 @@ const DishesPanelRow = memo(function DishesPanelRow({
               <Pressable
                 accessibilityLabel={`Rate ${dish.dishName} ${star} out of 5`}
                 accessibilityRole="button"
-                accessibilityState={{ disabled: pending, selected: star <= (dish.myRating ?? 0) }}
-                disabled={pending}
+                accessibilityState={{ selected: star <= (dish.myRating ?? 0) }}
                 hitSlop={6}
                 key={star}
                 onPress={() => onRateDish(dish.id, star)}
-                style={[styles.dishYourStarButton, pending && styles.dishYourStarButtonDisabled]}
+                style={styles.dishYourStarButton}
               >
                 <Star
                   size={19}
@@ -11144,7 +11378,6 @@ function DishesPanel({
   onOpenDish,
   onRateDish,
   onScrollOffsetChange,
-  pendingDishId,
   themeCopy
 }: {
   dishes: MemoryDish[];
@@ -11154,7 +11387,6 @@ function DishesPanel({
   onOpenDish: (dishId: string) => void;
   onRateDish: (dishId: string, rating: number) => void;
   onScrollOffsetChange: (offset: number) => void;
-  pendingDishId?: string | null;
   themeCopy: OccasionTheme["copy"];
 }) {
   useMemoryJourneySurfaceDiagnostics(journeySession, "dishes", "dishes");
@@ -11169,9 +11401,8 @@ function DishesPanel({
       journeySession={journeySession}
       onOpenDish={onOpenDish}
       onRateDish={onRateDish}
-      pending={pendingDishId === dish.id}
     />
-  ), [journeySession, onOpenDish, onRateDish, pendingDishId]);
+  ), [journeySession, onOpenDish, onRateDish]);
 
   return (
     <FlatList
@@ -11215,15 +11446,13 @@ function DishDetailSheet({
   error,
   myUsername,
   onClose,
-  onRateDish,
-  pending
+  onRateDish
 }: {
   dish: MemoryDish | null;
   error?: string;
   myUsername: string;
   onClose: () => void;
   onRateDish: (dishId: string, rating: number) => void;
-  pending: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const visible = dish !== null;
@@ -11307,12 +11536,11 @@ function DishDetailSheet({
                 <Pressable
                   accessibilityLabel={`Rate ${dishData.dishName} ${star} out of 5`}
                   accessibilityRole="button"
-                  accessibilityState={{ disabled: pending, selected: star <= (dishData.myRating ?? 0) }}
-                  disabled={pending}
+                  accessibilityState={{ selected: star <= (dishData.myRating ?? 0) }}
                   hitSlop={6}
                   key={star}
                   onPress={() => onRateDish(dishData.id, star)}
-                  style={[styles.dishSheetStarButton, pending && styles.dishYourStarButtonDisabled]}
+                  style={styles.dishSheetStarButton}
                 >
                   <Star
                     size={30}
@@ -15589,6 +15817,37 @@ function createStyles(ROOM_COLORS: RoomColors) {
   },
   stopOpenIcon: {
     flexShrink: 0
+  },
+  stopActions: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexShrink: 0,
+    gap: 4
+  },
+  stopActionButton: {
+    alignItems: "center",
+    backgroundColor: ROOM_COLORS.panelRaised,
+    borderColor: ROOM_COLORS.border,
+    borderRadius: 9,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 4,
+    minHeight: 34,
+    paddingHorizontal: 8
+  },
+  stopActionButtonPressed: {
+    opacity: 0.68
+  },
+  stopActionText: {
+    ...fontStyles.extraBold,
+    color: ROOM_COLORS.cool,
+    fontSize: 11
+  },
+  stopActionDeleteText: {
+    color: ROOM_COLORS.danger
+  },
+  stopActionsDismissArea: {
+    minHeight: 92
   },
   stopHeaderText: {
     flex: 1,
