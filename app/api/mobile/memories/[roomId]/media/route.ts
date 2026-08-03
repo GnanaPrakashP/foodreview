@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { MEMORY_MEDIA_BUCKET } from "@/lib/memory-media-policy";
+import { apiLogger } from "@/lib/observability/server";
 import { recordAccountMediaCleanupJob } from "@/lib/server/account-media-cleanup";
 import { signMemoryPhotoPayload } from "@/lib/server/memory-media-delivery";
 import {
@@ -19,6 +20,7 @@ import {
   mobileOptions,
   rateLimitResponse,
   readBoundedJson,
+  requestCorrelation,
   requireIdempotencyKey,
   type IdempotencyClaim
 } from "@/lib/server/api-security";
@@ -31,6 +33,23 @@ const MAX_MEDIA_ITEMS = 10;
 const MAX_DELETE_ITEMS = 100;
 
 type JsonRecord = Record<string, unknown>;
+
+const SAFE_MEDIA_FAILURE_LABEL = /^(?:memory_media|shared_memory)_[a-z0-9_]+$/;
+const SAFE_DATABASE_ERROR_CODE = /^(?:[0-9A-Z]{5}|PGRST[0-9]{3})$/;
+
+function logRoomMediaFailure(req: NextRequest, error: unknown) {
+  const record = error && typeof error === "object" ? error as JsonRecord : {};
+  const message = typeof record.message === "string" ? record.message : error instanceof Error ? error.message : "";
+  const code = typeof record.code === "string" && SAFE_DATABASE_ERROR_CODE.test(record.code)
+    ? record.code
+    : "unknown";
+  const failureReason = SAFE_MEDIA_FAILURE_LABEL.test(message) ? message : "unknown";
+  apiLogger.error("memory_media_attach_failed", new Error(failureReason), {
+    correlation_id: requestCorrelation(req).requestId,
+    database_error_code: code,
+    failure_reason: failureReason
+  });
+}
 
 function parseClientMetadata(body: JsonRecord, idempotencyKey: string) {
   const clientCreatedAt = typeof body.clientCreatedAt === "string" ? body.clientCreatedAt : "";
@@ -139,6 +158,7 @@ export async function POST(
     return mobileApiJson(req, METHODS, responseBody);
   } catch (error) {
     if (activeIdempotency) await abandonIdempotency(activeIdempotency).catch(() => undefined);
+    logRoomMediaFailure(req, error);
     return roomMediaError(req, memoryRoomSecurityErrorStatus(error));
   }
 }
