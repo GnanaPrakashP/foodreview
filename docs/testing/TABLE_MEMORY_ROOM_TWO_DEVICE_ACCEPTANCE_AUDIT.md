@@ -683,3 +683,37 @@ Verification:
 Failure evidence: `/private/tmp/tmr-rating-chat-stale-phone-a.png` and `/private/tmp/tmr-rating-dishes-5-phone-a.png`. Successful retest evidence: `/private/tmp/tmr-rating-fixed-chat-phone-a.png` and `/private/tmp/tmr-rating-fixed-reopen-phone-a.png`.
 
 Result: **PASS on Phone A** for slow rating, rapid latest-intent behavior, Dishes/Chat consistency, no-refresh convergence and force-close persistence. **BLOCKED on Phone B** for the corrected build, including simultaneous A/B rating and live peer aggregate verification. The final audit verdict remains **NO-GO**.
+
+## 23. Dish ownership, reply and immediate-rating continuation (2026-08-03)
+
+Four focused interaction defects were addressed without changing unrelated Table Memory Room behavior:
+
+1. Dish deletion is now creator-only in both layers. Long-press selection exposes Delete only when the authenticated username matches the dish `added_by` value, and the entity DELETE route independently returns HTTP 403 when another member attempts deletion.
+2. A sent dish card can now be selected as a reply target. The composer reuses the existing reply flow with a `Dish: <dish name>` preview. The message API and database write guard accept only a message or dish UUID belonging to the same room, and reply references are cleared if their target is later deleted.
+3. Tapping the currently selected star now clears the user's rating. A null database rating is retained as a monotonic tombstone so an older delayed request cannot resurrect the cleared value; read mapping excludes tombstones from the aggregate and personal rating.
+4. Star selection is rendered from component-local state immediately on Chat, Dishes and the detail sheet. Persistence is debounced for 300 ms and the latest intent replaces earlier queued intent, so rapid 5→1→3 interaction renders immediately and coalesces database traffic instead of making the UI wait for each response.
+
+Migration `202608030005_table_memory_dish_interactions.sql` was applied to the linked database. The new Vercel Preview reached READY at `https://foodreview-apyzhv26k-gnana-prakashs-projects-2da6e3af.vercel.app`, and `/api/health` returned `ok: true` with `databaseMigrationHead: 202608030005`.
+
+Focused verification completed before the physical attempt:
+
+- Entity-mutation and Table Memory blocker tests: **16/16 PASS**.
+- Root TypeScript check: **PASS**.
+- Mobile TypeScript check: **PASS**.
+- Preview-deployment verification and migration-manifest validation: **PASS**.
+- Deterministic rapid-rating regression: multiple rapid intents produce one latest persistence call; the clear-rating regression sends null and removes only the current user's aggregate contribution.
+
+These checks are regression evidence only and are not physical acceptance PASS results.
+
+| Focused physical case | Result | Reason |
+| --- | --- | --- |
+| Other member's dish long press offers Reply but no Delete | BLOCKED | Phone A disconnected from the USB bus before the new Preview bundle launched |
+| Own dish long press offers Reply and Delete | BLOCKED | Phone A disconnected from the USB bus before the new Preview bundle launched |
+| Reply to another member's dish, persist and reopen | BLOCKED | Phone A disconnected; Phone B is also unavailable |
+| Tap selected star again to clear, aggregate updates and persists | BLOCKED | Phone A disconnected before physical execution |
+| Rapid 5→1→3 star input feels immediate and settles at latest value | BLOCKED | Phone A disconnected before physical input/latency observation |
+| Peer no-refresh convergence for reply/rating/clear | BLOCKED | Phone B is not exposed by ADB |
+
+Connection evidence at the attempt: Phone A `ZA223JVWG7` appeared once in `adb devices -l`, then disappeared. The device runner waited 45 seconds and reported it absent. A subsequent ADB inspection reported zero connected devices.
+
+The final audit verdict remains **NO-GO**. The four cases above must be rerun on the deployed build after Phone A reconnects, followed by Phone B peer-convergence verification; automated evidence cannot upgrade them to PASS.
