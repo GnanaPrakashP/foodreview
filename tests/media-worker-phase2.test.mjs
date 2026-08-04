@@ -283,6 +283,7 @@ async function imageWorkerAdmin({ attempts = 1, completeLease = true, failAt = n
   const config = {
     concurrency: 1,
     downloadTimeoutMs: 5000,
+    ffmpegThreads: 1,
     ffmpegTimeoutMs: 10_000,
     ffprobeTimeoutMs: 5000,
     heartbeatIntervalMs: 5000,
@@ -482,6 +483,7 @@ async function videoWorkerAdmin({ failAt = null, rotation = 0, surface = "post" 
   const config = {
     concurrency: 1,
     downloadTimeoutMs: 5000,
+    ffmpegThreads: 1,
     ffmpegTimeoutMs: 20_000,
     ffprobeTimeoutMs: 5000,
     heartbeatIntervalMs: 5000,

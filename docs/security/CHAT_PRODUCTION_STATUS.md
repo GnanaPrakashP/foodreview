@@ -1568,3 +1568,9 @@ The two newest hosted video rows were durably published with valid nonzero durat
 Migration `202608040002_table_memory_media_terminal_visibility.sql` updates the bounded Chat and Media read contracts to include processing metadata and retain rejected rows for their uploader only. The immediate mobile upload mapper now preserves `duration_ms`, and the capture-preview scrubber thumb is vertically centered. Local two-account runtime validation proves the terminal row appears through both bounded RPCs for the uploader, remains absent for the peer, and retains 5,984 ms duration. Focused tests pass 23/23, root/mobile type checks and the production build pass, and migration metadata now targets head `202608040002` with 100 canonical migrations.
 
 No hosted database, Render worker, API or phone build was changed in this local continuation. Existing rejected assets require a controlled requeue only after the fixed worker is live. Physical Chat/Media convergence, playback, duration, upload timing and Phone B behavior remain mandatory.
+
+### Table Memory production-size video resource follow-up (2026-08-04)
+
+Status: **deployed processing still fails; bounded-worker fix locally validated but not deployed, so release remains NO-GO.**
+
+A fresh Phone A video reached durable room publication and was claimed by the Render worker, but each attempt lost its entire five-minute lease without a heartbeat or classified failure and was then reclaimed. The exact 1920x1080 rotated source succeeds in the FFmpeg 5.1 worker image. Under 512 MiB/0.5 CPU, bounding decoder/filter/x264 threads to one reduced the exact transform from 241,496 KiB/20.8 seconds to 174,296 KiB/8.8 seconds. The Starter Blueprint now runs one media job and one FFmpeg thread at a time. Focused tests pass 24/24, root type checking and the production build pass. The fix still requires commit, push and Render deployment, followed by a controlled requeue or fresh physical upload.

@@ -99,6 +99,13 @@ test("video transcoding relies on the cross-version default autorotation", () =>
   assert.match(worker, /ffmpeg applies display-matrix rotation before -vf by default/);
 });
 
+test("video transcoding bounds decoder, filter, and encoder threads", () => {
+  assert.match(worker, /MEDIA_WORKER_FFMPEG_THREADS/);
+  assert.match(worker, /"-threads",\s*String\(config\.ffmpegThreads\),\s*"-filter_threads"/);
+  assert.match(worker, /"-c:v",\s*"libx264",\s*"-threads",\s*String\(config\.ffmpegThreads\)/);
+  assert.match(source("render.yaml"), /MEDIA_WORKER_CONCURRENCY\s*\n\s*value: "1"[\s\S]*?MEDIA_WORKER_FFMPEG_THREADS\s*\n\s*value: "1"/);
+});
+
 test("the immediate upload mapper preserves video duration", () => {
   assert.match(hooks, /function mapUploadedMemoryPhoto[\s\S]*?durationMs: photo\.duration_ms \?\? null/);
 });

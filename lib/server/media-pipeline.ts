@@ -155,6 +155,7 @@ export type MediaFailureClass = "retryable" | "permanent" | "cancelled";
 export type MediaWorkerConfig = {
   concurrency: number;
   downloadTimeoutMs: number;
+  ffmpegThreads: number;
   ffmpegTimeoutMs: number;
   ffprobeTimeoutMs: number;
   heartbeatIntervalMs: number;
@@ -241,6 +242,7 @@ export function mediaWorkerConfig(env: NodeJS.ProcessEnv = process.env): MediaWo
   return {
     concurrency: boundedInteger("MEDIA_WORKER_CONCURRENCY", env.MEDIA_WORKER_CONCURRENCY, MEDIA_WORKER_DEFAULT_CONCURRENCY, 1, 8),
     downloadTimeoutMs: boundedInteger("MEDIA_WORKER_DOWNLOAD_TIMEOUT_MS", env.MEDIA_WORKER_DOWNLOAD_TIMEOUT_MS, 120_000, 5_000, 600_000),
+    ffmpegThreads: boundedInteger("MEDIA_WORKER_FFMPEG_THREADS", env.MEDIA_WORKER_FFMPEG_THREADS, 1, 1, 4),
     ffmpegTimeoutMs: boundedInteger("MEDIA_WORKER_FFMPEG_TIMEOUT_MS", env.MEDIA_WORKER_FFMPEG_TIMEOUT_MS, 240_000, 10_000, 900_000),
     ffprobeTimeoutMs: boundedInteger("MEDIA_WORKER_FFPROBE_TIMEOUT_MS", env.MEDIA_WORKER_FFPROBE_TIMEOUT_MS, 30_000, 5_000, 120_000),
     heartbeatIntervalMs,
@@ -891,6 +893,10 @@ async function processVideoAsset(
     const filter = videoFilterFor(asset.surface, crop);
     const ffmpegArgs = [
       "-y",
+      "-threads",
+      String(config.ffmpegThreads),
+      "-filter_threads",
+      String(config.ffmpegThreads),
       "-i",
       inputPath,
       "-map",
@@ -902,6 +908,8 @@ async function processVideoAsset(
       filter,
       "-c:v",
       "libx264",
+      "-threads",
+      String(config.ffmpegThreads),
       "-pix_fmt",
       "yuv420p",
       "-preset",
@@ -929,7 +937,22 @@ async function processVideoAsset(
     // videos still yield a frame.
     const posterSeekSeconds = Math.max(0, Math.min(1, (probe.durationMs ?? 2000) / 2000)).toFixed(2);
     const posterStarted = Date.now();
-    await runCommand("ffmpeg", ["-y", "-ss", posterSeekSeconds, "-i", outputPath, "-frames:v", "1", posterPath], config.ffmpegTimeoutMs, {
+    await runCommand("ffmpeg", [
+      "-y",
+      "-threads",
+      String(config.ffmpegThreads),
+      "-filter_threads",
+      String(config.ffmpegThreads),
+      "-ss",
+      posterSeekSeconds,
+      "-i",
+      outputPath,
+      "-frames:v",
+      "1",
+      "-threads",
+      String(config.ffmpegThreads),
+      posterPath
+    ], config.ffmpegTimeoutMs, {
       exit: "media_video_poster_failed",
       timeout: "temporary_ffmpeg_resource_failure"
     });

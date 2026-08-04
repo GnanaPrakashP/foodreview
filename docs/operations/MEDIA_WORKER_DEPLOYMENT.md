@@ -44,6 +44,14 @@ only after queue/CPU/memory evidence justifies the additional cost and then run
 the documented two-replica termination test. Automatic deployment is gated on
 repository checks.
 
+The Starter worker intentionally runs one media job at a time and pins FFmpeg
+decoder, filter and encoder threads to one. A half-CPU instance gains no useful
+throughput from competing FFmpeg threads, while unrestricted x264 allocation
+can exhaust the container when combined with the resident Next.js process.
+Keep `MEDIA_WORKER_CONCURRENCY=1` and `MEDIA_WORKER_FFMPEG_THREADS=1` unless a
+larger instance is validated with production-sized portrait videos under its
+actual CPU and memory limits.
+
 ## Release and verification
 
 After committing and pushing a release:
