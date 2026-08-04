@@ -1,3 +1,5 @@
+import { mergeServerMemoryAttachments } from "./memoryPhotoMerge.mjs";
+
 const LOCAL_DELIVERY_STATES = new Set([
   "uploading",
   "processing",
@@ -96,7 +98,10 @@ export function mergeMemoryMessage(existing, incoming) {
   const serverCreatedAt = incoming.serverCreatedAt || existing.serverCreatedAt ||
     (incoming.deliveryStatus === "sent" ? incoming.createdAt : null);
   const attachments = incoming.attachments?.length
-    ? incoming.attachments
+    // The incoming list is authoritative about WHICH attachments this message
+    // has, but a row published before its media finished processing carries no
+    // URL, so each entry still inherits the device's own preview.
+    ? mergeServerMemoryAttachments(existing.attachments, incoming.attachments)
     : existing.attachments?.length
       ? existing.attachments
       : incoming.attachments ?? existing.attachments ?? [];

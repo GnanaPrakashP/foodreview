@@ -13,6 +13,10 @@ import {
   sortMemoryMessages,
   upsertMemoryMessage
 } from "@/services/memoryMessageReconciliation.mjs";
+import {
+  memoryPhotoIndexById,
+  mergeServerMemoryPhoto
+} from "@/services/memoryPhotoMerge.mjs";
 import { isForegroundMemoryMessageSend } from "@/services/memoryMessageSendRegistry.mjs";
 import { withoutDismissedMemoryOutboxMessages } from "@/services/memoryMessageDismissalRegistry";
 import {
@@ -1057,12 +1061,15 @@ function memoryPhotoNeedsRenewal(photo: MemoryPhoto, now = Date.now()) {
 }
 
 function mergeRenewedMemoryPhoto(current: MemoryPhoto, renewed: MemoryPhoto): MemoryPhoto {
-  return {
+  // Renewal re-signs a delivery URL, and there is nothing to sign while the
+  // media is still being processed. Keep the local preview in that window
+  // rather than renewing a visible tile into an empty one.
+  return mergeServerMemoryPhoto(current, {
     ...current,
     ...renewed,
     storagePath: current.storagePath ?? renewed.storagePath ?? null,
     uploaderDisplayName: current.uploaderDisplayName || renewed.uploaderDisplayName
-  };
+  });
 }
 
 export async function renewMemoryPhoto(roomId: string, mediaId: string) {
@@ -1179,10 +1186,18 @@ function mergeMemoryRoomDelta(current: MemoryRoom, payload: MemoryRoomSyncPayloa
   const changes = payload.changes ?? {};
   const deletedMessageIds = new Set(rpcArray(changes.deletedMessageIds));
   const deletedPhotoIds = new Set(rpcArray(changes.deletedPhotoIds));
+  // A change page is a server projection of media that may still be processing,
+  // and it never carries a URL for one that is. Merge each changed row over the
+  // local row it replaces so an in-flight video keeps the device's preview
+  // instead of blanking until the worker finishes.
+  const localPhotosById = memoryPhotoIndexById([
+    ...current.photos,
+    ...current.messages.flatMap((message) => message.attachments)
+  ]);
   const changedPhotos = mapMemoryPhotos({
     namesByUsername,
     photos: rpcArray(changes.photos)
-  });
+  }).map((photo) => mergeServerMemoryPhoto(localPhotosById.get(photo.id), photo));
   const changedMessages = mapMemoryMessages({
     messages: rpcArray(changes.messages),
     namesByUsername,
@@ -1362,7 +1377,9 @@ async function syncCachedMemoryRoomSingleFlight(
 function mergeCachedMemoryChat(room: MemoryRoom, cached: MemoryRoom) {
   const activeCached = withoutDismissedMemoryOutboxMessages(cached);
   const photosById = new Map(activeCached.photos.map((photo) => [photo.id, photo]));
-  for (const photo of room.photos) photosById.set(photo.id, photo);
+  for (const photo of room.photos) {
+    photosById.set(photo.id, mergeServerMemoryPhoto(photosById.get(photo.id), photo));
+  }
 
   return withoutDismissedMemoryOutboxMessages({
     ...room,

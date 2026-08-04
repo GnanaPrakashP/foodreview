@@ -91,7 +91,13 @@ export function mapMemoryPhoto(photo: MemoryPhotoRow, namesByUsername: Record<st
     mimeType: photo.mime_type ?? null,
     moderationStatus: photo.moderation_status ?? "approved",
     processingFailureCode: photo.processing_failure_code ?? null,
-    processingStatus: photo.processing_status ?? (photo.media_asset_id ? "ready" : null),
+    // An asset-backed row is only `ready` once the read actually carries a
+    // deliverable URL. `shared_memory_room_sync_v1` predates `processing_status`
+    // and never selects it, so a still-transcoding video arrived with no status
+    // and no URL and was inferred as ready — which dropped its Processing
+    // overlay and left an empty tile until the worker finished.
+    processingStatus: photo.processing_status ??
+      (photo.media_asset_id ? (photo.public_url ? "ready" : "processing") : null),
     position: photo.position ?? 0,
     createdAt: photo.created_at
   };

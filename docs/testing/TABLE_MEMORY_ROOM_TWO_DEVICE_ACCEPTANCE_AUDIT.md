@@ -941,3 +941,44 @@ Three projection defects were isolated and fixed without unrelated refactoring:
 Focused validation after the final patch is **27/27 PASS**, mobile TypeScript is **PASS**, targeted ESLint reports zero errors, and diff whitespace validation is **PASS**. The broader phase-4 source-assertion file still has two pre-existing stale assertions for current runtime-sync formatting/subscriptions; they are unrelated to this targeted change and were not used to pass a physical case.
 
 The deployed/physically observed case remains **FAIL** until a fresh Phone A continuous recording proves no gap, followed by Phone B synchronization confirmation. The final audit verdict remains **NO-GO**.
+
+## 31. Room video blanks during upload — delta-sync projection (2026-08-05, client half)
+
+The user reported again that a video uploaded into Chat disappears and reappears on its own. This section records a **code-only** diagnosis and a client-side fix; no case is upgraded from it, and nothing here was observed on a device (ADB was unavailable on the development host during this pass).
+
+The cause is distinct from the three projection defects in section 30 and survived commit `9db73c7`:
+
+1. `processing_status` and `processing_failure_code` were added to `shared_memory_photos` in `202608040001`. `202608040002` taught `shared_memory_chat_page` and `shared_memory_media_page_v1` to return them; **`shared_memory_room_sync_v1` was never updated** (newest definition remains `202608020002`, and `shared_memory_room_sync_v2` only wraps it with message-metadata enrichment). Its `changed_photos` projection also omits `media_asset_id` and `storage_path`.
+2. `signMemoryPhotoPayload` re-reads the storage row, so it restores `media_asset_id`, but it can only sign from a **canonical derivative**, which does not exist while the worker is transcoding. Images fall back to a signed original source; **video has no such fallback**, which is why only video blanks.
+3. `mapMemoryPhoto` therefore resolved a still-processing video as `processingStatus: "ready"` with an empty URL, and `mergeMemoryRoomDelta` assigned that row over the local one. The tile lost both its `file://` preview and its Processing overlay, leaving an empty video frame with a play badge until the worker finished and a later read signed the canonical URL.
+4. Every realtime photo event queues this delta: the handler ends with `if (row.media_asset_id && !row.public_url) scheduleRefresh()`, and asset-backed rows are published with `public_url = null`, so the condition always holds.
+
+The client fix is one rule applied at every reader that lays a server photo row over a local one: **a server row never erases the device's local `file://` preview or a known processing state.** `memoryPhotoFromRealtimeRow` already did this through its `localSlot` lookup; `mergeServerMemoryPhoto` in the new `mobile/src/services/memoryPhotoMerge.mjs` now applies it in `mergeMemoryRoomDelta`, `mergeCachedMemoryChat`, `mergeRenewedMemoryPhoto`, `preserveRecentMediaAttachments` and the shared `mergeMemoryMessage` attachment merge. A terminal outcome (`failed`/`rejected`/`cancelled`) still drops the preview so the failure is what shows, and a real canonical URL always wins. `mapMemoryPhoto` additionally infers `processing` rather than `ready` for an asset-backed row that carries no deliverable URL, so a payload predating `processing_status` can no longer claim a video is finished.
+
+Validation: `tests/memory-photo-merge.test.mjs` is **10/10 PASS** (behavioural, not source-text, for the merge rules); all `tests/memory-*.test.mjs` are **134/135**, the single failure being the pre-existing stale `localFallbackRef` assertion in `memory-chat-media-processing-latency`, which is red on `HEAD` as well; `tests/table-memory-*` plus cache isolation are **61/61 PASS**; mobile and root TypeScript are **PASS**; targeted ESLint reports zero errors. The phase-4, media-pipeline and crop assertions that fail were verified to fail identically on `HEAD`.
+
+The server half — a migration redefining `shared_memory_room_sync_v1` to select `media_asset_id, processing_status, processing_failure_code`, and to show an uploader their own `rejected` rows for parity with `202608040002` — was written immediately afterwards and is recorded in section 32. It is not a dependency: the client fix keeps the frame and the Processing card on the deployed API, and the migration makes the reported status authoritative instead of inferred. (An earlier draft of this section also listed `storage_path`; that is wrong and was not implemented. `signMemoryPhotoPayload` reads the storage row itself under the admin client and strips stored locations from every row it returns, so projecting them through the RPC would add reach and no capability.)
+
+This is **NOT DEPLOYED and NOT PHYSICALLY RETESTED**. Phone A must record a continuous upload and prove the tile never blanks; Phone B must then confirm peer behaviour. The final audit verdict remains **NO-GO**.
+
+## 32. Room sync carries media processing state (2026-08-05, server half)
+
+Migration `202608050001_table_memory_room_sync_media_processing.sql` redefines `shared_memory_room_sync_v1` so its `changed_photos` projection selects `media_asset_id`, `processing_status` and `processing_failure_code`, and so an uploader keeps receiving their own `pending`/`rejected` rows while peers do not — the same visibility rule `202608040002` gave the bounded Chat and Media reads. The function body is otherwise reproduced verbatim from `202608020002`; a diff of the two definitions shows only those two changes. `shared_memory_room_sync_v2` needed no change: it wraps v1 and enriches message metadata only.
+
+Storage locations are deliberately **not** projected. `signMemoryPhotoPayload` looks up `storage_path` itself under the admin client and strips stored locations from every row it returns, so adding them to the RPC would widen the payload without enabling anything.
+
+Runtime evidence against the local stack, not source inspection — `tests/supabase-table-memory-room-sync-media-processing-runtime-validation.mjs` builds a two-member room and publishes a video before it is processed:
+
+| Case | Result | Observation |
+| --- | --- | --- |
+| Sync after early publication | PASS | The change page carries `processing_status = 'uploaded'`, the asset id and the advisory 4,414 ms duration, with no `storage_path` or `public_url` key |
+| Sync while transcoding | PASS | `processing_status = 'processing'` |
+| Sync after the canonical derivative lands | PASS | `ready` for both the uploader and the peer |
+| Sync after a rejected transcode | PASS | The uploader keeps the row with `media_video_transcode_failed`; the peer's change page omits it while still carrying the healthy video |
+| Same script against the pre-fix definition | FAIL as expected | `AssertionError: sync must project processing_status`, proving the migration is what makes the case pass |
+
+The migration applies cleanly to the local database, the manifest refresh validates **101 canonical migrations**, and `tests/table-memory-media-early-publication.test.mjs` is **17/17 PASS** with the added contract assertions. No application TypeScript changed in this half, so the earlier passing type checks still stand.
+
+Deploy order is unconstrained. The client fix alone keeps the frame and infers `processing` from a URL-less asset-backed row; the migration alone gives an old client the correct status without the frame; together the tile keeps its local frame and its Processing overlay until the canonical URL arrives.
+
+This is **NOT DEPLOYED and NOT PHYSICALLY RETESTED**. The physical case in section 31 remains open until Phone A records a continuous upload with no blank window and Phone B confirms peer behaviour. The final audit verdict remains **NO-GO**.

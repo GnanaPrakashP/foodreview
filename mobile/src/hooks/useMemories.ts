@@ -56,6 +56,7 @@ import {
   sortMemoryMessages,
   upsertMemoryMessage
 } from "@/services/memoryMessageReconciliation.mjs";
+import { mergeServerMemoryPhoto } from "@/services/memoryPhotoMerge.mjs";
 import {
   isDismissedMemoryOutboxMessage,
   markDismissedMemoryOutboxMessage,
@@ -1466,7 +1467,11 @@ function preserveRecentMediaAttachments(previous: unknown, next: unknown) {
   }
 
   const photosById = new Map(previousRoom.photos.map((photo) => [photo.id, photo]));
-  for (const photo of nextRoom.photos) photosById.set(photo.id, photo);
+  // A fresh read can carry media that is published but not processed yet, which
+  // has no server URL. Keep the device's own preview for those rows.
+  for (const photo of nextRoom.photos) {
+    photosById.set(photo.id, mergeServerMemoryPhoto(photosById.get(photo.id), photo));
+  }
   return withoutDismissedMemoryOutboxMessages(
     applyPendingRatings(withoutRecentlyDeletedMemoryStops(withoutRecentlyDeletedMemoryDishes(applyPendingMemoryDeletes({
       ...nextRoom,

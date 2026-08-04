@@ -161,6 +161,23 @@ test("bounded Chat and Media reads retain uploader-visible terminal video rows",
   assert.match(terminalVisibilityMigration, /moderation_status, 'approved'\) in \('pending', 'rejected'\)[\s\S]*?uploader_name = viewer\.username/);
 });
 
+test("the incremental room sync projects media processing state", () => {
+  // The change page is the only read that a client applies without a full
+  // refresh behind it. Omitting these columns let a still-transcoding video be
+  // inferred as ready, so the tile dropped its Processing overlay and its
+  // frame until the worker finished.
+  const syncMigration = source("supabase/migrations/202608050001_table_memory_room_sync_media_processing.sql");
+  assert.match(syncMigration, /create or replace function public\.shared_memory_room_sync_v1/);
+  assert.match(syncMigration, /changed_photos as \([\s\S]*?photo\.media_asset_id/);
+  assert.match(syncMigration, /changed_photos as \([\s\S]*?photo\.processing_status/);
+  assert.match(syncMigration, /changed_photos as \([\s\S]*?photo\.processing_failure_code/);
+  assert.match(syncMigration, /moderation_status, 'approved'\) in \('pending', 'rejected'\)[\s\S]*?uploader_name = viewer\.username/);
+  // Stored media locations stay out of the payload: the API signs delivery URLs
+  // from its own admin lookup and strips them from every row it returns.
+  assert.doesNotMatch(syncMigration, /changed_photos as \([\s\S]*?photo\.storage_path/);
+  assert.doesNotMatch(syncMigration, /changed_photos as \([\s\S]*?photo\.public_url/);
+});
+
 test("the twelve-pixel preview scrubber thumb is vertically centered", () => {
   assert.match(capturePreview, /videoTimelineThumb:\s*\{[\s\S]*?height: 12,[\s\S]*?marginTop: -6,[\s\S]*?top: "50%"/);
 });
