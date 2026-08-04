@@ -1200,10 +1200,10 @@ function memoryPhotoFromRealtimeRow(row: MemoryPhotoRealtimePayload["new"], curr
 
   return {
     createdAt,
-    durationMs: durationMs ?? null,
+    durationMs: durationMs ?? localSlot?.durationMs ?? null,
     id,
-    imageHeight: imageHeight ?? null,
-    imageWidth: imageWidth ?? null,
+    imageHeight: imageHeight ?? localSlot?.imageHeight ?? null,
+    imageWidth: imageWidth ?? localSlot?.imageWidth ?? null,
     mediaAssetId: mediaAssetId ?? null,
     mediaType: mediaType === "audio" || mediaType === "video" ? mediaType : "image",
     messageId: messageId ?? null,
@@ -1275,7 +1275,10 @@ function upsertPhotoInMessage(message: MemoryMessage, photo: MemoryPhoto) {
 function applyRealtimePhotoUpsert(currentRoom: MemoryRoom, photo: MemoryPhoto) {
   let attachedToMessage = false;
   const messages = currentRoom.messages.map((message) => {
-    if (message.id !== photo.messageId) return message;
+    if (
+      message.id !== photo.messageId &&
+      memoryMessageServerId(message) !== photo.messageId
+    ) return message;
     attachedToMessage = true;
     return upsertPhotoInMessage(message, photo);
   });
@@ -1310,7 +1313,9 @@ function upsertPhotoInMessagePages(
     pages: current.pages.map((page) => ({
       ...page,
       messages: page.messages.map((message) => (
-        message.id === photo.messageId ? upsertPhotoInMessage(message, photo) : message
+        message.id === photo.messageId || memoryMessageServerId(message) === photo.messageId
+          ? upsertPhotoInMessage(message, photo)
+          : message
       ))
     }))
   };
@@ -3762,10 +3767,15 @@ export function useAddMemoryPhotoMutation(roomId: string) {
           .map((photo) => {
             const mapped = mapUploadedMemoryPhoto(photo, uploaderDisplayName);
             const local = localByPosition.get(mapped.position);
-            if (!local || mapped.publicUrl) return mapped;
+            if (!local) return mapped;
             return {
               ...mapped,
-              publicUrl: local.publicUrl,
+              durationMs: mapped.durationMs ?? local.durationMs ?? null,
+              fileSizeBytes: mapped.fileSizeBytes ?? local.fileSizeBytes ?? null,
+              imageHeight: mapped.imageHeight ?? local.imageHeight,
+              imageWidth: mapped.imageWidth ?? local.imageWidth,
+              mimeType: mapped.mimeType ?? local.mimeType ?? null,
+              publicUrl: mapped.publicUrl || local.publicUrl,
               uploadProgress: mapped.processingStatus === "ready" ? null : 1
             };
           })
@@ -3802,23 +3812,41 @@ export function useAddMemoryPhotoMutation(roomId: string) {
         };
         const optimisticPhotoIds = new Set(context.optimisticPhotoIds);
         const realPhotoIds = new Set(photos.map((photo) => photo.id));
+        const localFallbackPhotos = (
+          currentMessage?.attachments ?? context.optimisticMessage?.attachments ?? []
+        )
+          .filter((photo) => optimisticPhotoIds.has(photo.id))
+          .map((photo) => ({
+            ...photo,
+            createdAt: actualMessage.createdAt,
+            messageId: actualMessage.id,
+            uploadProgress: 1
+          }));
+        let confirmedMessage: MemoryMessage = {
+          ...actualMessage,
+          attachments: photos.length > 0 ? photos : localFallbackPhotos
+        };
         queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => {
           if (!current) return current;
+          const currentFallbackPhotos = current.photos
+            .filter((photo) => optimisticPhotoIds.has(photo.id))
+            .map((photo) => ({
+              ...photo,
+              createdAt: actualMessage.createdAt,
+              messageId: actualMessage.id,
+              uploadProgress: 1
+            }));
           const fallbackPhotos = photos.length > 0
             ? photos
-            : current.photos
-              .filter((photo) => optimisticPhotoIds.has(photo.id))
-              .map((photo) => ({
-                ...photo,
-                createdAt: actualMessage.createdAt,
-                messageId: actualMessage.id,
-                uploadProgress: 1
-              }));
+            : currentFallbackPhotos.length > 0
+              ? currentFallbackPhotos
+              : localFallbackPhotos;
           const fallbackPhotoIds = new Set(fallbackPhotos.map((photo) => photo.id));
           const reconciledMessage = {
             ...actualMessage,
             attachments: photos.length > 0 ? actualMessage.attachments : fallbackPhotos
           };
+          confirmedMessage = reconciledMessage;
 
           return {
             ...current,
@@ -3834,7 +3862,13 @@ export function useAddMemoryPhotoMutation(roomId: string) {
           };
         });
         if (context.clientId) {
-          const commitWrite = commitOfflineMemoryOutboxMessage(context.clientId, actualMessage);
+          // The early-publication response legitimately has no photos while
+          // the worker is still processing. Persisting `actualMessage` here
+          // deleted the optimistic photo rows and stored a body-less message
+          // with no attachments. The scheduled realtime reconcile then read
+          // that empty SQLite projection first, hiding the whole chat row for
+          // several seconds until its server refresh completed.
+          const commitWrite = commitOfflineMemoryOutboxMessage(context.clientId, confirmedMessage);
           observeOfflineMemoryWrite(commitWrite, "media_outbox_commit");
           void commitWrite.then(
             () => endForegroundMemoryMessageSend(context.clientId),

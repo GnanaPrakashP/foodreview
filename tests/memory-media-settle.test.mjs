@@ -227,6 +227,39 @@ test("a confirmed send still processing keeps the preview the join re-pointed", 
   assert.equal(settleMemoryRoomMedia(input), input);
 });
 
+test("a ready room photo atomically replaces the only optimistic chat attachment", () => {
+  // Reproduces the physical-device handoff: the worker's ready photo reached
+  // room.photos before a refreshed message snapshot attached it to the chat
+  // row. Dropping the preview made this body-less message disappear entirely.
+  const preview = photo({
+    durationMs: 2_000,
+    id: "optimistic-media:client-1-0",
+    mediaType: "video",
+    messageId: SERVER_MESSAGE_ID,
+    processingStatus: "processing",
+    publicUrl: "file:///local/client-1.mp4",
+    uploadProgress: 1
+  });
+  const ready = photo({
+    durationMs: 2_067,
+    id: "real-video-a",
+    mediaType: "video",
+    messageId: SERVER_MESSAGE_ID,
+    processingStatus: "ready",
+    publicUrl: "https://cdn.example.com/video-a.mp4"
+  });
+  const settled = settleMemoryRoomMedia(room({
+    messages: [message({ attachments: [preview] })],
+    photos: [preview, ready]
+  }));
+
+  assert.equal(settled.messages.length, 1);
+  assert.deepEqual(settled.messages[0].attachments.map((item) => item.id), ["real-video-a"]);
+  assert.equal(settled.messages[0].attachments[0].processingStatus, "ready");
+  assert.equal(settled.messages[0].attachments[0].publicUrl, ready.publicUrl);
+  assert.deepEqual(settled.photos.map((item) => item.id), ["real-video-a"]);
+});
+
 test("optimistic media is recognised only by its id prefix", () => {
   assert.equal(isOptimisticMemoryMedia(photo({ id: "optimistic-media:asset-a" })), true);
   assert.equal(isOptimisticMemoryMedia(photo({ id: "real-a" })), false);

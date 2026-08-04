@@ -16,6 +16,7 @@ const memories = source("mobile/src/services/memories.ts");
 const hooks = source("mobile/src/hooks/useMemories.ts");
 const room = source("mobile/app/memories/[id].tsx");
 const capturePreview = source("mobile/src/components/memories/camera/MediaPreviewScreen.tsx");
+const camera = source("mobile/src/components/memories/camera/CameraScreen.tsx");
 const worker = source("lib/server/media-pipeline.ts");
 
 test("room media publishes one logical message and its attachments atomically before derivatives", () => {
@@ -108,6 +109,46 @@ test("video transcoding bounds decoder, filter, and encoder threads", () => {
 
 test("the immediate upload mapper preserves video duration", () => {
   assert.match(hooks, /function mapUploadedMemoryPhoto[\s\S]*?durationMs: photo\.duration_ms \?\? null/);
+});
+
+test("room video geometry remains stable from capture through pending publication", () => {
+  assert.doesNotMatch(camera, /function videoGuideFraming[\s\S]{0,180}if \(!guideFrame\) return null/);
+  assert.match(camera, /cropRect: guideFrame \? relativeCropRectForVisibleFrame/);
+  assert.match(hooks, /imageHeight: mapped\.imageHeight \?\? local\.imageHeight/);
+  assert.match(hooks, /imageWidth: mapped\.imageWidth \?\? local\.imageWidth/);
+  assert.match(hooks, /imageHeight: imageHeight \?\? localSlot\?\.imageHeight \?\? null/);
+  assert.match(memories, /const localByPosition = new Map\([\s\S]*?imageHeight: photo\.imageHeight \?\? local\.imageHeight/);
+});
+
+test("camera stop leaves recording state immediately while the preview is prepared", () => {
+  assert.match(camera, /type VideoCapturePhase = "idle" \| "starting" \| "recording" \| "finalizing"/);
+  assert.match(camera, /if \(recordingRef\.current && videoCapturePhaseRef\.current === "recording"\) \{[\s\S]*?updateVideoCapturePhase\("finalizing"\);[\s\S]*?stopRecording\(\)/);
+  assert.match(camera, /videoFinalizing \? <Text style=\{styles\.captureBlackoutText\}>Preparing preview…<\/Text>/);
+});
+
+test("video confirmation keeps the decoded local frame until the server poster loads", () => {
+  assert.match(room, /const localThumbnailCacheKey = viewKey \? `\$\{viewKey\}:local-video` : cacheKey/);
+  assert.match(room, /currentFallback\?\.viewKey === viewKey[\s\S]*?currentFallback\.uri = uri/);
+  assert.match(room, /const posterLoaded = Boolean\(posterUri && loadedPosterUri === posterUri\)/);
+  assert.match(room, /onLoad=\{\(\) => setLoadedPosterUri\(posterUri\)\}/);
+  assert.match(room, /localFallbackVisible && !posterLoaded && styles\.videoThumbnailPosterPending/);
+  assert.match(room, /videoThumbnailPosterPending:\s*\{\s*opacity: 0/);
+});
+
+test("early publication persists the attachment-bearing confirmed message", () => {
+  assert.match(hooks, /let confirmedMessage: MemoryMessage = \{[\s\S]*?attachments: photos\.length > 0 \? photos : localFallbackPhotos/);
+  assert.match(hooks, /confirmedMessage = reconciledMessage/);
+  assert.match(hooks, /commitOfflineMemoryOutboxMessage\(context\.clientId, confirmedMessage\)/);
+  assert.doesNotMatch(hooks, /commitOfflineMemoryOutboxMessage\(context\.clientId, actualMessage\)/);
+});
+
+test("incremental room sync never treats a missing photo row as an empty media message", () => {
+  assert.match(memories, /const attachedPhotoIds = new Set\(visibleMessages\.flatMap/);
+  assert.match(memories, /visibleMessageIds\.has\(photo\.messageId\) \|\|\s*attachedPhotoIds\.has\(photo\.id\)/);
+  assert.match(memories, /const currentAttachments = message\.attachments\.filter/);
+  assert.match(memories, /\[\.\.\.currentAttachments, \.\.\.refreshedAttachments\]/);
+  assert.match(memories, /attachments,\s*\/\/ A delta is not a full media snapshot|\/\/ A delta is not a full media snapshot[\s\S]*?attachments,/);
+  assert.doesNotMatch(memories, /attachments: photosByMessageId\[message\.id\] \?\? \[\]/);
 });
 
 test("bounded Chat and Media reads retain uploader-visible terminal video rows", () => {

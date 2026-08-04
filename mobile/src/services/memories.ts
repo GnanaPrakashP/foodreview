@@ -8,6 +8,7 @@ import { MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS } from "@/constants/memoryMediaPoli
 import { mapMemoryMessages, mapMemoryPhoto, mapMemoryPhotos, mapMemoryRoom, mapMemoryStop, memoryPlaceNamesForRoom } from "@/services/memoryMapper";
 import {
   mergeMemoryMessageSnapshot,
+  memoryMessageServerId,
   removeMemoryMessage,
   sortMemoryMessages,
   upsertMemoryMessage
@@ -1210,11 +1211,21 @@ function mergeMemoryRoomDelta(current: MemoryRoom, payload: MemoryRoomSyncPayloa
   for (const photo of changedPhotos) photosById.set(photo.id, photo);
 
   visibleMessages = sortMemoryMessages(visibleMessages);
-  const visibleMessageIds = new Set(visibleMessages.flatMap((message) => (
-    message.serverId ? [message.serverId, message.id] : [message.id]
+  const visibleMessageIds = new Set(visibleMessages.flatMap((message) => [
+    message.id,
+    memoryMessageServerId(message)
+  ].filter((identity): identity is string => Boolean(identity))));
+  const attachedPhotoIds = new Set(visibleMessages.flatMap((message) => (
+    message.attachments
+      .filter((photo) => !deletedPhotoIds.has(photo.id))
+      .map((photo) => photo.id)
   )));
   const visiblePhotos = Array.from(photosById.values())
-    .filter((photo) => !photo.messageId || visibleMessageIds.has(photo.messageId))
+    .filter((photo) => (
+      !photo.messageId ||
+      visibleMessageIds.has(photo.messageId) ||
+      attachedPhotoIds.has(photo.id)
+    ))
     .sort((first, second) => (
       new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime() ||
       first.position - second.position ||
@@ -1238,9 +1249,31 @@ function mergeMemoryRoomDelta(current: MemoryRoom, payload: MemoryRoomSyncPayloa
         const changedReplyTarget = message.replyToMessageId
           ? changedMessageById.get(message.replyToMessageId)
           : null;
+        const currentAttachments = message.attachments.filter((photo) => (
+          !deletedPhotoIds.has(photo.id)
+        ));
+        const refreshedAttachments = [
+          ...(photosByMessageId[message.id] ?? []),
+          ...(memoryMessageServerId(message) && memoryMessageServerId(message) !== message.id
+            ? photosByMessageId[memoryMessageServerId(message) as string] ?? []
+            : [])
+        ];
+        const attachmentsById = new Map(
+          [...currentAttachments, ...refreshedAttachments].map((photo) => [photo.id, photo])
+        );
+        const attachments = Array.from(attachmentsById.values()).sort((first, second) => (
+          first.position - second.position ||
+          new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime() ||
+          first.id.localeCompare(second.id)
+        ));
         return {
           ...message,
-          attachments: photosByMessageId[message.id] ?? [],
+          // A delta is not a full media snapshot. Keep attachment rows that
+          // were already projected unless their explicit tombstone is in this
+          // page, then merge any refreshed server rows over them. Replacing
+          // with `[]` during the worker's processing→ready handoff made a
+          // body-less video message disappear until the following delta.
+          attachments,
           ...(message.replyToMessageId && deletedMessageIds.has(message.replyToMessageId)
             ? { replyToMessage: null, replyToMessageId: null }
             : changedReplyTarget
@@ -1531,7 +1564,22 @@ async function recoverPendingMemoryMessages(
       const namesByUsername = Object.fromEntries(
         room.participants.map((participant) => [participant.username, participant.displayName])
       );
-      const photos = mapMemoryPhotos({ namesByUsername, photos: result.photos });
+      const localByPosition = new Map(
+        pendingMessage.attachments.map((attachment) => [attachment.position, attachment])
+      );
+      const photos = mapMemoryPhotos({ namesByUsername, photos: result.photos }).map((photo) => {
+        const local = localByPosition.get(photo.position);
+        if (!local) return photo;
+        return {
+          ...photo,
+          durationMs: photo.durationMs ?? local.durationMs ?? null,
+          fileSizeBytes: photo.fileSizeBytes ?? local.fileSizeBytes ?? null,
+          imageHeight: photo.imageHeight ?? local.imageHeight,
+          imageWidth: photo.imageWidth ?? local.imageWidth,
+          mimeType: photo.mimeType ?? local.mimeType ?? null,
+          publicUrl: photo.publicUrl || local.publicUrl
+        };
+      });
       const sentMessage: MemoryMessage = {
         ...pendingMessage,
         attachments: photos,

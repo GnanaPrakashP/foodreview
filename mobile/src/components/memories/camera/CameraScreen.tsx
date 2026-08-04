@@ -60,6 +60,7 @@ const AnimatedCircle = Reanimated.createAnimatedComponent(Circle);
 
 type CaptureMode = "picture" | "video";
 type Facing = "back" | "front";
+type VideoCapturePhase = "idle" | "starting" | "recording" | "finalizing";
 type FocusPoint = { nonce: number; x: number; y: number };
 type CapturedPhoto = {
   height?: number;
@@ -128,6 +129,7 @@ export function CameraScreen({
   const zoomRef = useRef(0);
   const pinchStartRef = useRef(0);
   const cameraReadyRef = useRef(false);
+  const videoCapturePhaseRef = useRef<VideoCapturePhase>("idle");
 
   const [facing, setFacing] = useState<Facing>("back");
   const [flashEnabled, setFlashEnabled] = useState(false);
@@ -136,7 +138,7 @@ export function CameraScreen({
   const [cameraReady, setCameraReady] = useState(false);
   const [pictureSize, setPictureSize] = useState<string | undefined>();
   const [capturing, setCapturing] = useState(false);
-  const [recording, setRecording] = useState(false);
+  const [videoCapturePhase, setVideoCapturePhase] = useState<VideoCapturePhase>("idle");
   const [zoom, setZoom] = useState(0);
   const [autoFocus, setAutoFocus] = useState<FocusMode>("off");
   const [focusPoint, setFocusPoint] = useState<FocusPoint | null>(null);
@@ -152,7 +154,9 @@ export function CameraScreen({
 
   const cameraPermission = useInAppCameraPermissions(true);
   const cameraActive = cameraPermission.granted && appActive && !closingRef.current;
-  const cameraBusy = capturing || recording;
+  const recording = videoCapturePhase === "recording";
+  const videoFinalizing = videoCapturePhase === "finalizing";
+  const cameraBusy = capturing || videoCapturePhase !== "idle";
   const shutterUnavailable = !cameraReady || !cameraPermission.granted || (cameraBusy && !recording);
   const topInset = Platform.OS === "web" ? spacing.lg : Math.max(insets.top + spacing.sm, 42);
   const bottomInset = Platform.OS === "web" ? spacing.xl : Math.max(insets.bottom + spacing.lg, 28);
@@ -178,6 +182,11 @@ export function CameraScreen({
   function markReady(ready: boolean) {
     cameraReadyRef.current = ready;
     setCameraReady(ready);
+  }
+
+  function updateVideoCapturePhase(nextPhase: VideoCapturePhase) {
+    videoCapturePhaseRef.current = nextPhase;
+    setVideoCapturePhase(nextPhase);
   }
 
   useEffect(() => {
@@ -346,8 +355,17 @@ export function CameraScreen({
   }
 
   async function startVideoRecording() {
-    if (!cameraReady || !cameraPermission.granted || capturing || recordingRef.current || captureMode !== "video") return;
-    setCapturing(true);
+    if (
+      !cameraReady ||
+      !cameraPermission.granted ||
+      capturing ||
+      recordingRef.current ||
+      videoCapturePhaseRef.current !== "idle" ||
+      captureMode !== "video"
+    ) return;
+    // Acknowledge the tap immediately. Microphone permission can take a beat
+    // on some Android devices, but the shutter must never appear unresponsive.
+    updateVideoCapturePhase("starting");
     setCameraError("");
 
     try {
@@ -358,8 +376,8 @@ export function CameraScreen({
       }
 
       recordingStartRef.current = Date.now();
-      setRecording(true);
       recordingRef.current = true;
+      updateVideoCapturePhase("recording");
       haptics.impact(Haptics.ImpactFeedbackStyle.Heavy);
 
       // recordAsync stops itself at maxDuration, so no JS interval is needed to
@@ -368,6 +386,10 @@ export function CameraScreen({
       const recordingPromise = cameraRef.current?.recordAsync({ maxDuration: MAX_VIDEO_MS / 1000 });
       if (!recordingPromise) throw new Error("Recording did not start");
       const video = await recordingPromise;
+      // Native recording has stopped. Dimension probing and staging may still
+      // take a moment, so expose that honestly instead of leaving the red
+      // recording clock on screen after the user's stop tap.
+      updateVideoCapturePhase("finalizing");
 
       if (video?.uri && !closingRef.current && appActiveRef.current) {
         const framing = await videoGuideFraming(video.uri, viewport, photoGuideFrame);
@@ -390,15 +412,15 @@ export function CameraScreen({
       if (!closingRef.current) setCameraError("Could not record video.");
     } finally {
       recordingRef.current = false;
-      setRecording(false);
-      setCapturing(false);
+      updateVideoCapturePhase("idle");
     }
   }
 
   function handleShutterPress() {
     if (shutterUnavailable && !recording) return;
     if (captureMode === "video") {
-      if (recordingRef.current) {
+      if (recordingRef.current && videoCapturePhaseRef.current === "recording") {
+        updateVideoCapturePhase("finalizing");
         haptics.impact(Haptics.ImpactFeedbackStyle.Medium);
         cameraRef.current?.stopRecording();
         return;
@@ -545,9 +567,10 @@ export function CameraScreen({
 
       {photoGuideFrame ? <PhotoCropGuide frame={photoGuideFrame} /> : gridEnabled ? <CameraGrid /> : null}
       <FocusReticle point={focusPoint} />
-      {captureBlackout ? (
+      {captureBlackout || videoFinalizing ? (
         <View style={styles.captureBlackout}>
           <ActivityIndicator color={colors.dark.white} />
+          {videoFinalizing ? <Text style={styles.captureBlackoutText}>Preparing preview…</Text> : null}
         </View>
       ) : null}
 
@@ -563,30 +586,30 @@ export function CameraScreen({
       />
 
       <View style={[styles.topControls, { paddingTop: topInset }]}>
-        <Pressable accessibilityLabel="Close camera" disabled={recording} onPress={closeCamera} style={[styles.iconButton, recording && styles.disabledControl]}>
+        <Pressable accessibilityLabel="Close camera" disabled={cameraBusy} onPress={closeCamera} style={[styles.iconButton, cameraBusy && styles.disabledControl]}>
           <Ionicons name="close" size={22} color={colors.dark.white} />
         </Pressable>
         <View style={styles.topRightControls}>
           <Pressable
             accessibilityLabel={flashEnabled ? "Turn flash off" : "Turn flash on"}
-            disabled={facing === "front" || recording}
+            disabled={facing === "front" || cameraBusy}
             onPress={() => {
               haptics.selection();
               setFlashEnabled((current) => !current);
             }}
-            style={[styles.iconButton, (facing === "front" || recording) && styles.disabledControl]}
+            style={[styles.iconButton, (facing === "front" || cameraBusy) && styles.disabledControl]}
           >
             <Ionicons name={flashEnabled ? "flash" : "flash-off-outline"} size={21} color={colors.dark.white} />
           </Pressable>
           {!photoGuideFrame ? (
             <Pressable
               accessibilityLabel={gridEnabled ? "Hide camera grid" : "Show camera grid"}
-              disabled={recording}
+              disabled={cameraBusy}
               onPress={() => {
                 haptics.selection();
                 setGridEnabled((current) => !current);
               }}
-              style={[styles.iconButton, gridEnabled && styles.iconButtonActive, recording && styles.disabledControl]}
+              style={[styles.iconButton, gridEnabled && styles.iconButtonActive, cameraBusy && styles.disabledControl]}
             >
               <Ionicons name="grid-outline" size={20} color={colors.dark.white} />
             </Pressable>
@@ -594,7 +617,12 @@ export function CameraScreen({
         </View>
       </View>
 
-      {recording ? (
+      {videoCapturePhase === "starting" ? (
+        <View pointerEvents="none" style={[styles.recordingBadge, { top: topInset + 58 }]}>
+          <ActivityIndicator color={colors.dark.white} size="small" />
+          <Text style={styles.recordingText}>Starting…</Text>
+        </View>
+      ) : recording ? (
         <View pointerEvents="none" style={[styles.recordingBadge, { top: topInset + 58 }]}>
           <View style={styles.recordingDot} />
           <RecordingClock startedAt={recordingStartRef.current} />
@@ -613,7 +641,15 @@ export function CameraScreen({
         <View style={styles.bottomActionRow}>
           <GalleryButton disabled={cameraBusy} onPress={openGallery} />
           <Pressable
-            accessibilityLabel={recording ? "Stop recording" : captureMode === "video" ? "Start recording" : "Take photo"}
+            accessibilityLabel={
+              videoFinalizing
+                ? "Preparing video preview"
+                : recording
+                  ? "Stop recording"
+                  : captureMode === "video"
+                    ? "Start recording"
+                    : "Take photo"
+            }
             disabled={shutterUnavailable && !recording}
             onPress={handleShutterPress}
             style={[styles.shutterButton, shutterUnavailable && !recording && styles.disabledControl]}
@@ -944,10 +980,10 @@ function viewportFrame(viewport: ViewportSize): CropGuideFrame {
 }
 
 // Recorded video dimensions aren't reported by the camera; a first-frame
-// thumbnail reveals them so the guide and screen-visible regions can be
-// mapped onto the file. Returns null (default framing) if probing fails.
+// thumbnail reveals them. Probe every video, including the unguided memory
+// camera, so its optimistic upload bubble has the same aspect ratio as the
+// final server media. Returns null if probing fails.
 async function videoGuideFraming(uri: string, viewport: ViewportSize, guideFrame: CropGuideFrame | null) {
-  if (!guideFrame) return null;
   try {
     const thumb = await VideoThumbnails.getThumbnailAsync(uri, { time: 0 });
     if (!thumb.width || !thumb.height) {
@@ -956,9 +992,9 @@ async function videoGuideFraming(uri: string, viewport: ViewportSize, guideFrame
     }
     const size = { height: thumb.height, width: thumb.width };
     const framing = {
-      cropRect: relativeCropRectForVisibleFrame(size, viewport, guideFrame),
+      cropRect: guideFrame ? relativeCropRectForVisibleFrame(size, viewport, guideFrame) : null,
       height: thumb.height,
-      visibleRect: relativeCropRectForVisibleFrame(size, viewport, viewportFrame(viewport)),
+      visibleRect: guideFrame ? relativeCropRectForVisibleFrame(size, viewport, viewportFrame(viewport)) : null,
       width: thumb.width
     };
     await discardTemporaryAccountFile(thumb.uri).catch(() => {});
@@ -1097,8 +1133,15 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     alignItems: "center",
     backgroundColor: colors.dark.black,
+    gap: spacing.md,
     justifyContent: "center",
     zIndex: 2
+  },
+  captureBlackoutText: {
+    ...fontStyles.semiBold,
+    color: colors.dark.white,
+    fontSize: typography.body,
+    letterSpacing: 0
   },
   gridOverlay: {
     ...StyleSheet.absoluteFillObject,

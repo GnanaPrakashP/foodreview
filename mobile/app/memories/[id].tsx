@@ -9389,9 +9389,33 @@ function VideoThumbnailLayer({
   // optimistic -> confirmed swap. The poster URL belongs to a different media
   // identity and may need a network/disk-cache read; removing the local frame
   // first made the video tile go blank and then reappear at upload completion.
-  // This ref deliberately stops following `cacheKey` once a poster arrives.
-  const localFallbackRef = useRef<{ cacheKey: string; uri: string } | null>(null);
-  if (!posterUri) localFallbackRef.current = { cacheKey, uri };
+  // This ref deliberately stops following content identity once a poster
+  // arrives. For a chat attachment, `viewKey` names the logical message slot
+  // and survives optimistic -> HTTP-confirmed -> Realtime-ready. Keeping the
+  // generated-thumbnail key on that slot prevents confirmation from clearing
+  // the already decoded local frame merely because storagePath/id changed.
+  const localFallbackRef = useRef<{
+    cacheKey: string;
+    uri: string;
+    viewKey: string | null;
+  } | null>(null);
+  const localThumbnailCacheKey = viewKey ? `${viewKey}:local-video` : cacheKey;
+  if (!posterUri) {
+    const currentFallback = localFallbackRef.current;
+    if (viewKey && currentFallback?.viewKey === viewKey) {
+      // The upload pipeline may move the source into owner-scoped storage.
+      // Follow that URI without changing the thumbnail identity.
+      currentFallback.uri = uri;
+    } else {
+      localFallbackRef.current = {
+        cacheKey: localThumbnailCacheKey,
+        uri,
+        viewKey: viewKey ?? null
+      };
+    }
+  }
+
+  const [loadedPosterUri, setLoadedPosterUri] = useState<string | null>(null);
 
   if (Platform.OS === "web") {
     return posterUri ? (
@@ -9410,6 +9434,8 @@ function VideoThumbnailLayer({
   }
 
   const localFallback = localFallbackRef.current;
+  const localFallbackVisible = Boolean(localFallback);
+  const posterLoaded = Boolean(posterUri && loadedPosterUri === posterUri);
   if (posterUri || localFallback) {
     return (
       <View style={styles.videoThumbnailLayer}>
@@ -9425,10 +9451,15 @@ function VideoThumbnailLayer({
             alt="Video preview"
             cachePolicy="memory-disk"
             contentFit={contentFit}
+            onLoad={() => setLoadedPosterUri(posterUri)}
             priority="high"
             recyclingKey={`${viewKey ?? cacheKey}:poster`}
             source={posterUri}
-            style={styles.videoThumbnailImage}
+            style={[
+              styles.videoThumbnailImage,
+              localFallbackVisible && !posterLoaded && styles.videoThumbnailPosterPending
+            ]}
+            transition={0}
           />
         ) : null}
       </View>
@@ -15190,6 +15221,9 @@ function createStyles(ROOM_COLORS: RoomColors) {
     ...StyleSheet.absoluteFillObject,
     height: "100%",
     width: "100%"
+  },
+  videoThumbnailPosterPending: {
+    opacity: 0
   },
   videoThumbnailScrim: {
     ...StyleSheet.absoluteFillObject,

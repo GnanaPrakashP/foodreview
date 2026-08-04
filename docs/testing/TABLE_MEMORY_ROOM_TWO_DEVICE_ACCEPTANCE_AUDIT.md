@@ -873,3 +873,71 @@ The exact private source was downloaded to a mode-0600 temporary diagnostic file
 The targeted local fix sets `MEDIA_WORKER_FFMPEG_THREADS=1`, applies the bound to input decoding, filters, x264 and poster extraction, and sets `MEDIA_WORKER_CONCURRENCY=1` for the single Starter worker. Focused tests are **24/24 PASS**, root TypeScript is **PASS**, the production build is **PASS**, and the exact-source constrained replay is **PASS**. This is **NOT DEPLOYED and NOT PHYSICALLY RETESTED**. Do not requeue the stuck production job until the new worker is live; otherwise it will consume the remaining attempts on the known-bad worker.
 
 The final audit verdict remains **NO-GO**.
+
+## 29. Phone A stable video geometry and capture-state retest (2026-08-04)
+
+The reported video-size jump and misleading post-stop recording state were reproduced and traced to two client transitions. Unguided Table Memory camera videos did not probe their dimensions, and upload confirmation/realtime/offline-recovery mappings could replace local dimensions with null server fields. Separately, the camera retained its red `recording` state until thumbnail probing and owner-scoped file staging completed after native recording had already stopped.
+
+The targeted client fix now probes every captured video's first frame, carries its dimensions and duration through optimistic publication, HTTP confirmation, Realtime and offline recovery, and models capture as `idle → starting → recording → finalizing`. The stop tap moves to `finalizing` before calling native `stopRecording`, removes the red recording clock immediately and shows `Preparing preview…` until the preview is ready.
+
+Focused physical Phone A results in the existing two-member `Test` room:
+
+| Focused physical case | Result | Observation |
+| --- | --- | --- |
+| Start room-camera recording | PASS on Phone A | At the first post-tap capture the red timer and stop control were already visible at `0:00` |
+| Stop room-camera recording | PASS on Phone A | The first post-tap capture no longer showed recording; it showed `Preparing preview…` while the file was probed and staged |
+| Open the captured preview | PASS on Phone A | The 4-second portrait clip opened with playback and timeline controls |
+| Preserve tile geometry during publication | PASS on Phone A | The first Chat frame used the full portrait tile during `Preparing`, retained the identical footprint during `Processing`, and retained it when the final play control appeared |
+| Reach canonical ready state | PASS on Phone A | The local room cache recorded one ready attachment (`dc13140f-afe5-4374-ae82-ec75493b9b64`) at 900×1600 with duration 4,414 ms |
+| Confirm on Phone B | BLOCKED | ADB exposed only Phone A (`ZA223JVWG7`), so peer geometry/playback and two-phone Chat/Media convergence were not observed |
+
+Evidence:
+
+- `/private/tmp/tmr-video-recording-immediate.png`
+- `/private/tmp/tmr-video-finalizing-immediate.png`
+- `/private/tmp/tmr-video-preview-open.png`
+- `/private/tmp/tmr-video-upload-initial.png`
+- `/private/tmp/tmr-video-upload-seven-seconds.png`
+- `/private/tmp/tmr-video-upload-after-27s.png`
+- `/private/tmp/phone-a-memory-after-video.db`
+
+Focused validation is **13/13 PASS**, mobile TypeScript is **PASS**, targeted ESLint reports zero errors, and diff whitespace validation is **PASS**. The broader selected static test run still contains one unrelated stale assertion for the older post/avatar-only `defaultCropRect` source shape; it is not caused by this patch.
+
+The sparse screenshots used for this first pass appeared to show uninterrupted confirmation. Continuous recordings in section 30 later disproved that conclusion: the geometry stayed stable, but the newest row still disappeared for several seconds during the processing-to-ready handoff. The capture-state and stable-geometry rows above remain valid; final-confirmation continuity does not. It does not upgrade the two-device media rows because Phone B was unavailable. The final audit verdict remains **NO-GO**.
+
+## 30. Phone A continuous video-handoff reproduction and targeted projection fixes (2026-08-04)
+
+Continuous Phone A screen recording superseded the sparse-screenshot conclusion in section 29. A short room-camera clip was visible at the live edge while preparing/processing, the entire newest media row then vanished and older rows moved into its place, and the ready row returned several seconds later without manual refresh.
+
+Physical observations:
+
+| Attempt | Result | Observation |
+| --- | --- | --- |
+| Baseline continuous capture (`10:48 pm`) | FAIL | The new row was absent in full-resolution frames at approximately 45.8–46.8 seconds and returned by 53.5 seconds |
+| Atomic optimistic→real attachment replacement (`11:01 pm`) | FAIL | The processing row remained visible initially, was absent around the 40-second frame, and returned ready around the 45-second frame |
+| Attachment-bearing SQLite confirmation after forced app reload (`11:12 pm`) | FAIL | The newest row was visible processing at 25–30 seconds, older `10:48/11:01` rows replaced it at 35 seconds, and the ready `11:12` row returned by 40 seconds |
+| Final incremental-delta retention patch | BLOCKED | Phone A disconnected from ADB immediately after the last reproduction, before another upload could be recorded |
+
+Evidence:
+
+- `/private/tmp/tmr-handoff-fixed.mp4`
+- `/private/tmp/handoff-45_8.png`
+- `/private/tmp/handoff-46_8.png`
+- `/private/tmp/handoff-53_5.png`
+- `/private/tmp/tmr-atomic-handoff.mp4`
+- `/private/tmp/tmr-atomic-40.png`
+- `/private/tmp/tmr-atomic-45.png`
+- `/private/tmp/tmr-atomic-handoff-final.mp4`
+- `/private/tmp/tmr-final-30.png`
+- `/private/tmp/tmr-final-35.png`
+- `/private/tmp/tmr-final-40.png`
+
+Three projection defects were isolated and fixed without unrelated refactoring:
+
+1. `settleMemoryRoomMedia` removed a superseded optimistic attachment before inserting its real replacement. A body-less media message therefore became empty and was filtered from Chat. The transition now replaces the attachment atomically and de-duplicates the real row.
+2. Realtime attachment matching used only `message.id`, although a confirmed optimistic message can retain its local React identity while exposing the real ID through `serverId`. Realtime now matches both identities in the room and paginated Chat caches. Early publication also persists the attachment-bearing confirmed message instead of an empty `actualMessage` projection.
+3. `mergeMemoryRoomDelta` treated each incremental change page like a complete photo snapshot and assigned `attachments: []` when that page omitted the media row. It now retains existing, non-tombstoned attachments and merges refreshed server rows over them; explicit photo/message tombstones still remove data.
+
+Focused validation after the final patch is **27/27 PASS**, mobile TypeScript is **PASS**, targeted ESLint reports zero errors, and diff whitespace validation is **PASS**. The broader phase-4 source-assertion file still has two pre-existing stale assertions for current runtime-sync formatting/subscriptions; they are unrelated to this targeted change and were not used to pass a physical case.
+
+The deployed/physically observed case remains **FAIL** until a fresh Phone A continuous recording proves no gap, followed by Phone B synchronization confirmation. The final audit verdict remains **NO-GO**.

@@ -67,11 +67,11 @@ export function settleMemoryRoomMedia(room) {
   if (!hasOptimisticMemoryMedia(room)) return room;
   const keyIndex = memoryMediaMessageKeyIndex(room.messages);
   const knownMessageKeys = new Set(keyIndex.values());
-  const settledSlots = new Set();
+  const settledBySlot = new Map();
   const addSettled = (photo, fallbackMessageId) => {
     if (isOptimisticMemoryMedia(photo)) return;
     const slot = memoryMediaSlotKey(photo, keyIndex, fallbackMessageId);
-    if (slot) settledSlots.add(slot);
+    if (slot && !settledBySlot.has(slot)) settledBySlot.set(slot, photo);
   };
   for (const photo of room.photos) addSettled(photo, null);
   for (const message of room.messages) {
@@ -80,7 +80,27 @@ export function settleMemoryRoomMedia(room) {
   const superseded = (photo, fallbackMessageId) => {
     if (!isOptimisticMemoryMedia(photo)) return false;
     const slot = memoryMediaSlotKey(photo, keyIndex, fallbackMessageId);
-    return slot ? settledSlots.has(slot) : false;
+    return slot ? settledBySlot.has(slot) : false;
+  };
+  const settledReplacement = (photo, fallbackMessageId) => {
+    if (!isOptimisticMemoryMedia(photo)) return photo;
+    const slot = memoryMediaSlotKey(photo, keyIndex, fallbackMessageId);
+    const settled = slot ? settledBySlot.get(slot) : null;
+    if (!settled) return photo;
+    // Replace in one projection update. Removing the local preview first made
+    // a media-only message temporarily empty, so the chat timeline filtered
+    // out the whole row until a later room refresh attached the real photo.
+    // Keep the decoded local source as a visual fallback for this render while
+    // adopting the server identity and terminal processing state immediately.
+    return {
+      ...photo,
+      ...settled,
+      durationMs: settled.durationMs ?? photo.durationMs ?? null,
+      imageHeight: settled.imageHeight ?? photo.imageHeight ?? null,
+      imageWidth: settled.imageWidth ?? photo.imageWidth ?? null,
+      publicUrl: settled.publicUrl || photo.publicUrl,
+      uploadProgress: settled.uploadProgress ?? null
+    };
   };
   // A preview can also be STRANDED: its message is gone from the room, so
   // nothing will ever supersede it and it sits in the Media tab forever wearing
@@ -98,11 +118,16 @@ export function settleMemoryRoomMedia(room) {
       return message;
     }
     messagesChanged = true;
+    const seenIds = new Set();
     return {
       ...message,
-      attachments: message.attachments.filter(
-        (attachment) => !superseded(attachment, message.id)
-      )
+      attachments: message.attachments
+        .map((attachment) => settledReplacement(attachment, message.id))
+        .filter((attachment) => {
+          if (seenIds.has(attachment.id)) return false;
+          seenIds.add(attachment.id);
+          return true;
+        })
     };
   });
   const photos = room.photos.filter(
