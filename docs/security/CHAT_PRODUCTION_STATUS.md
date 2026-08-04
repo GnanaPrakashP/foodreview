@@ -1558,3 +1558,13 @@ flicker/duplicate/reposition behavior, background/terminated delivery,
 disconnect/restart recovery, cancellation and signed-expiry checks remain
 mandatory. Detailed evidence and the 15-stage pipeline are in
 `docs/testing/TABLE_MEMORY_ROOM_MEDIA_PIPELINE_2026-08-04.md`.
+
+### Table Memory FFmpeg compatibility and terminal-read continuation (2026-08-04)
+
+Status: **targeted fix locally validated; deployment and physical two-phone acceptance remain NOT EXECUTED, so release remains NO-GO.**
+
+The two newest hosted video rows were durably published with valid nonzero durations but rejected before derivative creation. Reproduction in the existing Debian/FFmpeg 5.1 worker image proved that the valueless `-autorotate` option added by the prior follow-up is not compatible with the deployed FFmpeg version. The option is now omitted; FFmpeg's enabled-by-default display-matrix handling produces the correct portrait canonical video in both FFmpeg 5.1 and local FFmpeg 8.
+
+Migration `202608040002_table_memory_media_terminal_visibility.sql` updates the bounded Chat and Media read contracts to include processing metadata and retain rejected rows for their uploader only. The immediate mobile upload mapper now preserves `duration_ms`, and the capture-preview scrubber thumb is vertically centered. Local two-account runtime validation proves the terminal row appears through both bounded RPCs for the uploader, remains absent for the peer, and retains 5,984 ms duration. Focused tests pass 23/23, root/mobile type checks and the production build pass, and migration metadata now targets head `202608040002` with 100 canonical migrations.
+
+No hosted database, Render worker, API or phone build was changed in this local continuation. Existing rejected assets require a controlled requeue only after the fixed worker is live. Physical Chat/Media convergence, playback, duration, upload timing and Phone B behavior remain mandatory.

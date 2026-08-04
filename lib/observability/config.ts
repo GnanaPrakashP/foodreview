@@ -30,6 +30,6 @@ export function safeReleaseMetadata(env: NodeJS.ProcessEnv = process.env) {
     environment: config.environment,
     release: config.release,
     applicationVersion: env.npm_package_version || "0.1.0",
-    databaseMigrationHead: "202608040001"
+    databaseMigrationHead: "202608040002"
   };
 }

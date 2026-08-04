@@ -3235,7 +3235,33 @@
       "sizeBytes": 29590,
       "sourceRoot": "supabase/migrations",
       "version": "202608040001"
+    },
+    {
+      "canonicalDisposition": "canonical",
+      "dependencyHints": [
+        "can_read_shared_memory",
+        "current_profile_name",
+        "profiles",
+        "shared_memory_chat_page",
+        "shared_memory_media_page_v1",
+        "shared_memory_messages",
+        "shared_memory_photos"
+      ],
+      "description": "table_memory_media_terminal_visibility",
+      "duplicateStatus": "phase3-canonical",
+      "filename": "202608040002_table_memory_media_terminal_visibility.sql",
+      "objectCategories": [
+        "functions",
+        "memory",
+        "media-pipeline",
+        "profiles",
+        "social"
+      ],
+      "sha256": "3487cfa0956737b58f529bd2e493eacfadad69ef0466fcaaf7c4a86c82b7d8fa",
+      "sizeBytes": 8161,
+      "sourceRoot": "supabase/migrations",
+      "version": "202608040002"
     }
   ],
-  "currentCanonicalMigrations": 99
+  "currentCanonicalMigrations": 100
 }

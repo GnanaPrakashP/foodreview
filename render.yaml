@@ -19,7 +19,7 @@ services:
       - key: APP_ENVIRONMENT
         value: production
       - key: APP_MIGRATION_HEAD
-        value: "202608040001"
+        value: "202608040002"
       - key: APP_RELEASE
         sync: false
       - key: NEXT_PUBLIC_SUPABASE_URL

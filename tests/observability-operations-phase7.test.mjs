@@ -34,7 +34,7 @@ test("logger and telemetry-provider failures remain fail-open", () => {
 test("operations alert thresholds classify healthy, warning and critical snapshots", async () => {
   const configuration = JSON.parse(await read("config/operations-alerts.json"));
   const snapshot = {
-    migrationHead: "202608040001",
+    migrationHead: "202608040002",
     database: { connections: 75, maxConnections: 100, invalidIndexes: 0, unvalidatedConstraints: 0, waitingConnections: 0 },
     media: { deadLetter: 0, oldestQueuedAgeSeconds: 0 },
     accountDeletion: { failed: 0, oldestPendingAgeSeconds: 0, unresolvedAmbiguities: 0 },

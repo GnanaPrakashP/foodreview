@@ -794,6 +794,7 @@ function mapUploadedMemoryPhoto(
 ): MemoryPhoto {
   return {
     createdAt: photo.created_at,
+    durationMs: photo.duration_ms ?? null,
     id: photo.id,
     imageHeight: photo.image_height ?? null,
     imageWidth: photo.image_width ?? null,

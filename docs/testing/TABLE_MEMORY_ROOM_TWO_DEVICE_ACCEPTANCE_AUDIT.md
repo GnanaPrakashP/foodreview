@@ -847,3 +847,19 @@ Evidence:
 - `/private/tmp/tmr-video-upload-continuity-contact-sheet.png`
 
 The preview-control defect is **PASS on Phone A**. Upload/processing thumbnail continuity is **PASS up to the worker boundary**, but final confirmation remains **BLOCKED** by the separately deferred processing failure. This section does not claim that the video-processing latency/root cause is resolved. The full audit verdict remains **NO-GO**.
+
+## 27. Phone A video terminal-state and duration follow-up (2026-08-04)
+
+The user reported that the capture-preview timeline thumb was vertically low, completed uploads disappeared from Chat, and Media showed `0 sec`. This follow-up is recorded as **FAIL on the deployed build**; no case is upgraded from code inspection or local tests.
+
+Authoritative hosted rows show that both newest videos did publish one `activity_kind='media'` message and one attachment before processing. Their stored durations are 7,443 ms and 59,606 ms, but both first-attempt jobs ended `rejected/media_video_transcode_failed` with no derivatives. The exact sources transcode locally, and the rotated Motorola source reproduced the server failure in the existing Debian FFmpeg 5.1 worker image: the deployed valueless `-autorotate` option is rejected during option parsing. Removing the redundant option succeeds in the same network-disabled, one-CPU/512-MiB container and also passes the existing FFmpeg 8 tests.
+
+Three additional targeted defects were corrected locally:
+
+1. The upload-result mapper now preserves `duration_ms`, preventing the immediate `0 sec` fallback.
+2. Migration `202608040002_table_memory_media_terminal_visibility.sql` adds media asset/processing fields to bounded Chat reads and retains rejected rows for their uploader in both Chat and Media while keeping them hidden from peers.
+3. The 12-pixel preview scrubber thumb now uses a `-6` pixel vertical offset from `top: 50%`.
+
+Focused evidence is **23/23 PASS**, both TypeScript checks and the production build pass, the migration manifest validates 100 migrations, the local migration applies, and the local two-account runtime fixture proves uploader-visible/peer-hidden terminal rows through direct RLS plus both bounded RPCs with a nonzero duration. The fix is **NOT DEPLOYED and NOT PHYSICALLY RETESTED**. Existing rejected jobs also require a post-worker-deploy operator requeue or a fresh upload; they will not recover merely from reinstalling the app.
+
+The final audit verdict remains **NO-GO**. Phone A must retest preview alignment, upload → Chat continuity, Media duration and playback after the worker/API/database/mobile deployment; Phone B must then verify peer synchronization and the remaining two-device matrix.

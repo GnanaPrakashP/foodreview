@@ -2,7 +2,7 @@
 
 Date: 2026-08-04
 Scope: image/video send only; continuation of the two-device acceptance audit
-Physical verdict: **DEPLOYED DATABASE, NOT YET RETESTED — NO-GO remains**
+Physical verdict: **FOLLOW-UP FIX IMPLEMENTED LOCALLY, NOT DEPLOYED OR PHYSICALLY RETESTED — NO-GO remains**
 
 This document records the current end-to-end pipeline and the targeted changes made after the physical video/upload failures. Automated and local-database evidence below does not convert any physical two-phone case to PASS.
 
@@ -14,6 +14,10 @@ This document records the current end-to-end pipeline and the targeted changes m
 4. A recovered room upload waited for `ready` before attaching and omitted the client timestamp/sequence/order fields required by the media API. A restart between finalize and attach could therefore strand the logical message.
 5. A media message and its photo could both contribute to unread state. Media needed one notification/unread owner, with the message retained only as the Chat timeline container.
 6. The linked migration attempts exposed historical messages/photos whose authors or uploaders had later left their rooms. The normal membership write guards correctly rejected the classification backfills. The migration now disables only each named guard around its exact historical `activity_kind`/`processing_status` update and immediately reenables it; all runtime writes retain the guards.
+7. The deployed Render image uses FFmpeg 5.1. The follow-up worker passed `-autorotate` as a valueless option, syntax accepted by local FFmpeg 8 but rejected by FFmpeg 5 before input decoding. Both newest Phone A videos therefore reached durable message/photo rows and then became terminal `media_video_transcode_failed` assets. The cross-version fix omits the option and relies on FFmpeg's enabled-by-default display-matrix autorotation.
+8. The immediate HTTP-result mapper omitted `duration_ms`, so a successfully published video could render as `0 sec` until a later authoritative remap.
+9. The bounded Chat and Media RPCs predated the terminal-media policy. They omitted processing metadata from Chat and filtered rejected rows even for the uploader, causing the authoritative failure card to disappear during refetch/reconciliation.
+10. The 12-pixel capture-preview timeline thumb used a `-4` pixel top offset from `top: 50%`; it is now centered with `-6`.
 
 ## Exact 15-stage timeline after the change
 
@@ -29,7 +33,7 @@ This document records the current end-to-end pipeline and the targeted changes m
 | 8 | Initial Realtime publication: transaction commits | peer absent → peer processing item | Message INSERT and photo INSERT events | Realtime is immediate path; cursor refresh is recovery | Peer never receives a pointer before message+attachment+authorized source exist; photo owns Media unread/notification, message does not double-count Chat unread |
 | 9 | Worker discovery/start: finalize trigger plus `runMediaProcessingBatch()` | uploaded → processing | One durable job; lease/heartbeat/event writes | Direct durable enqueue; worker claim is independent of sender | Fenced claim token/generation prevents concurrent authoritative completion |
 | 10 | Image work: `processImageAsset()` | processing → derivatives staged | Private canonical and thumbnail metadata/objects | Secondary work is asynchronous | While pending, only a bounded signed JPEG/PNG/WebP source is returned to an already-authorized room reader; ready swaps to canonical in place |
-| 11 | Video work: `ffprobe()`, `videoDisplayGeometry()`, `processVideoAsset()` | processing → canonical/poster staged | Private canonical MP4 and poster | Probe, transcode, poster and upload have independent timings/timeouts | Crop uses display-oriented geometry after 0/90/180/270 rotation; malformed/unsupported geometry is permanent, timeout/signal remains transient |
+| 11 | Video work: `ffprobe()`, `videoDisplayGeometry()`, `processVideoAsset()` | processing → canonical/poster staged | Private canonical MP4 and poster | Probe, transcode, poster and upload have independent timings/timeouts | Crop uses display-oriented geometry after 0/90/180/270 rotation; FFmpeg default autorotation is cross-version compatible; malformed/unsupported geometry is permanent, timeout/signal remains transient |
 | 12 | Final asset update: `complete_media_processing_job` plus `sync_shared_memory_photo_from_asset_v1` | processing → ready, or terminal | Asset status; the existing photo row is UPDATEd with canonical metadata/status | No client action required | Same photo ID/message ID; ready transition requires the complete private derivative set; terminal failure is visible only to uploader |
 | 13 | Sender final state: room photo Realtime handler + signed refresh | processing overlay/local visual → ready canonical, or clear failure | QueryClient, media/chat pages and SQLite update | Realtime completion triggers refresh; polling is foreground/restart recovery only | Local visual is retained until remote visual is usable; stable slot key avoids disappear/reappear/remount |
 | 14 | Peer visibility: initial photo INSERT then ready UPDATE | image source or video placeholder → canonical image/video+poster | Media badge/notification on insert; signed delivery on authorized read | No manual refresh; debounced signed refresh follows Realtime | Pending videos expose no raw source; failed metadata is hidden from peers; no signed URL/storage path enters Realtime or logs |
@@ -51,6 +55,10 @@ This document records the current end-to-end pipeline and the targeted changes m
 Before this change, the captured Phone A source was 19.49 MiB and its asset moved from created at approximately 21:27:06 to uploaded at 21:27:15.425 (about 9.4 seconds). The 17.51-second clip then remained absent from the room while worker processing retried. The product therefore exposed `source upload + worker queue + probe + transcode + poster + derivative upload + attach` as one apparent send wait.
 
 After this change, the architectural publication boundary is `source upload + finalize + one v3 transaction`; worker time is no longer on the room-publication critical path. On the final clean local replay, that v3 transaction completed in 11.6 ms. This is isolated local server/database timing, not a phone/network measurement. A physical after-timing for Phone A and Phone B remains required after deployment; it must report at least send-to-local, source-upload, source-to-peer-placeholder/image, worker-ready, and peer-playable timings.
+
+### Follow-up failure evidence
+
+The two newest reported uploads had durable media messages and attachment rows with real durations of 7,443 ms and 59,606 ms. Both worker jobs were claimed once and rejected about 2.7–3.3 seconds later with `media_video_transcode_failed`; neither produced a derivative. The exact private sources transcode successfully with local FFmpeg 8. In the existing FoodReview worker image (Debian/FFmpeg 5.1, network disabled, one CPU and 512 MiB), the deployed valueless `-autorotate` form fails immediately at option parsing, while the same rotated Motorola source succeeds when the explicit option is removed. This isolates the defect to FFmpeg-version syntax, not duration, rotation metadata, codec, file size or upload integrity.
 
 ### Structured segment timing
 
@@ -82,6 +90,7 @@ Runtime and schema:
 - `lib/server/media-pipeline.ts`
 - `lib/server/memory-media-delivery.ts`
 - `mobile/app/memories/[id].tsx`
+- `mobile/src/components/memories/camera/MediaPreviewScreen.tsx`
 - `mobile/src/hooks/useMemories.ts`
 - `mobile/src/security/offlineMemorySecurity.ts`
 - `mobile/src/services/mediaPipeline.ts`
@@ -91,6 +100,7 @@ Runtime and schema:
 - `mobile/src/services/memoryShared.ts`
 - `mobile/src/types/models.ts`
 - `supabase/migrations/202608040001_table_memory_media_early_publication.sql`
+- `supabase/migrations/202608040002_table_memory_media_terminal_visibility.sql`
 
 Regression coverage:
 
@@ -123,13 +133,13 @@ Audit/status evidence:
 
 ## Verification completed without claiming physical PASS
 
-- Clean local replay reached migration head `202608040001`.
-- Local Supabase runtime fixture passed uploaded → processing → ready on one photo ID; idempotent repeat returned the same message/photo; peer had Media unread 1 and Chat unread 0; terminal failure was visible only to uploader.
-- Real FFmpeg test passed a raw-landscape MP4 carrying a 90-degree portrait display matrix through full-frame Table Memory crop, canonical MP4 and poster generation.
-- Focused media/security/settlement tests pass 57/57; root/mobile type checks, migration-manifest validation, diff validation and the production Next build pass.
+- Local migration apply reached head `202608040002`; the manifest validates 100 canonical migrations and 118 historical entries.
+- Local Supabase runtime fixture passed uploaded → processing → ready on one photo ID; idempotent repeat returned the same message/photo; peer had Media unread 1 and Chat unread 0; terminal failure was visible only to the uploader through direct RLS and both bounded Chat/Media RPCs, with its 5,984 ms duration intact.
+- Real FFmpeg tests passed raw-landscape/90-degree portrait video through full-frame Table Memory crop, canonical MP4 and poster generation on local FFmpeg 8; the reported Motorola clip also passed inside the network-disabled Render-equivalent FFmpeg 5.1 worker image.
+- Focused worker/media/read-contract tests pass 23/23; root and mobile type checks, migration-manifest validation, diff validation and the production build pass. A physical phone test remains required after deployment.
 
 ## Physical cases still required
 
-Linked migration `202608040001` is applied and present in the remote ledger. The user reports the API, worker and mobile build were also redeployed/reinstalled, but those surfaces have not yet been physically verified in this continuation. These changes are **not physically passed** until exercised on both authenticated phones: one image each direction, one portrait video each direction, rapid image/video batches, simultaneous mixed batches, Chat/Media consistency, no flicker/duplicate/reposition, background/terminated receiver behavior, temporary disconnect/restart recovery, signed-URL expiry, cancellation, permanent failure presentation, membership removal, and before/after timings. Capture both phones and sanitized server/worker events for every failure.
+Linked migration `202608040001` remains applied, but follow-up migration `202608040002`, the FFmpeg compatibility fix and the mobile duration/thumb fixes are not yet deployed. The two existing rejected source videos must be explicitly requeued only after the fixed worker is live, or fresh videos must be uploaded; otherwise their prior permanent rejection will remain authoritative. These changes are **not physically passed** until exercised on both authenticated phones: one image each direction, one portrait video each direction, rapid image/video batches, simultaneous mixed batches, Chat/Media consistency, real duration, no flicker/duplicate/reposition, background/terminated receiver behavior, temporary disconnect/restart recovery, signed-URL expiry, cancellation, permanent failure presentation, membership removal, and before/after timings. Capture both phones and sanitized server/worker events for every failure.
 
 Final verdict remains **NO-GO** until those core two-phone cases pass with no open P0/P1.

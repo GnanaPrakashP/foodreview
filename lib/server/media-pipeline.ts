@@ -891,7 +891,6 @@ async function processVideoAsset(
     const filter = videoFilterFor(asset.surface, crop);
     const ffmpegArgs = [
       "-y",
-      "-autorotate",
       "-i",
       inputPath,
       "-map",

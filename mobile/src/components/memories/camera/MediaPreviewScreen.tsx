@@ -425,7 +425,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     height: 12,
     marginLeft: -6,
-    marginTop: -4,
+    marginTop: -6,
     position: "absolute",
     top: "50%",
     width: 12

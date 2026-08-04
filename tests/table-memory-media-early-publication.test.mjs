@@ -7,6 +7,7 @@ function source(relativePath) {
 }
 
 const migration = source("supabase/migrations/202608040001_table_memory_media_early_publication.sql");
+const terminalVisibilityMigration = source("supabase/migrations/202608040002_table_memory_media_terminal_visibility.sql");
 const route = source("app/api/mobile/memories/[roomId]/media/route.ts");
 const delivery = source("lib/server/memory-media-delivery.ts");
 const pipeline = source("mobile/src/services/mediaPipeline.ts");
@@ -14,6 +15,7 @@ const recovery = source("mobile/src/services/mediaUploadRecovery.ts");
 const memories = source("mobile/src/services/memories.ts");
 const hooks = source("mobile/src/hooks/useMemories.ts");
 const room = source("mobile/app/memories/[id].tsx");
+const capturePreview = source("mobile/src/components/memories/camera/MediaPreviewScreen.tsx");
 const worker = source("lib/server/media-pipeline.ts");
 
 test("room media publishes one logical message and its attachments atomically before derivatives", () => {
@@ -90,4 +92,27 @@ test("Realtime completion drives signed refresh and the explicit UI state model"
   assert.match(worker, /recordMediaWorkerEvent\("job_started"/);
   assert.match(worker, /assetHash: hashSecurityIdentifier/);
   assert.match(migration, /moderation_status, 'approved'\) in \('pending', 'rejected'\)[\s\S]*?uploader_name = public\.current_profile_name\(\)/);
+});
+
+test("video transcoding relies on the cross-version default autorotation", () => {
+  assert.doesNotMatch(worker, /"-autorotate"/);
+  assert.match(worker, /ffmpeg applies display-matrix rotation before -vf by default/);
+});
+
+test("the immediate upload mapper preserves video duration", () => {
+  assert.match(hooks, /function mapUploadedMemoryPhoto[\s\S]*?durationMs: photo\.duration_ms \?\? null/);
+});
+
+test("bounded Chat and Media reads retain uploader-visible terminal video rows", () => {
+  assert.match(terminalVisibilityMigration, /create or replace function public\.shared_memory_chat_page/);
+  assert.match(terminalVisibilityMigration, /photo\.processing_status/);
+  assert.match(terminalVisibilityMigration, /photo\.processing_failure_code/);
+  assert.match(terminalVisibilityMigration, /photo\.media_asset_id/);
+  assert.match(terminalVisibilityMigration, /create or replace function public\.shared_memory_media_page_v1/);
+  assert.match(terminalVisibilityMigration, /moderation_status, 'approved'\) in \('pending', 'rejected'\)[\s\S]*?uploader_name = v_user_name/);
+  assert.match(terminalVisibilityMigration, /moderation_status, 'approved'\) in \('pending', 'rejected'\)[\s\S]*?uploader_name = viewer\.username/);
+});
+
+test("the twelve-pixel preview scrubber thumb is vertically centered", () => {
+  assert.match(capturePreview, /videoTimelineThumb:\s*\{[\s\S]*?height: 12,[\s\S]*?marginTop: -6,[\s\S]*?top: "50%"/);
 });

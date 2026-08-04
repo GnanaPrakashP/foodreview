@@ -197,6 +197,7 @@ try {
   required(await admin.from("media_assets").insert({
     access_class: "memory_private",
     crop_rect: { height: 1, targetAspect: null, width: 1, x: 0, y: 0 },
+    duration_ms: 5984,
     expires_at: new Date(Date.now() + 600_000).toISOString(),
     id: failedAssetId,
     media_type: "video",
@@ -258,7 +259,41 @@ try {
   }]);
   assert.deepEqual(peerFailureRows, []);
 
-  console.log(`PASS: stable early publication, Media-only unread, idempotent readiness, and uploader-only terminal failure (local attach ${localAttachDurationMs} ms)`);
+  const ownerChatPage = required(await ownerClient.rpc("shared_memory_chat_page_v2", {
+    p_before_created_at: null,
+    p_before_message_id: null,
+    p_limit: 50,
+    p_room_id: roomId
+  }), "owner terminal chat page");
+  const ownerMediaPage = required(await ownerClient.rpc("shared_memory_media_page_v1", {
+    p_before_created_at: null,
+    p_before_photo_id: null,
+    p_limit: 30,
+    p_room_id: roomId
+  }), "owner terminal media page");
+  const peerChatPage = required(await peerClient.rpc("shared_memory_chat_page_v2", {
+    p_before_created_at: null,
+    p_before_message_id: null,
+    p_limit: 50,
+    p_room_id: roomId
+  }), "peer terminal chat page");
+  const peerMediaPage = required(await peerClient.rpc("shared_memory_media_page_v1", {
+    p_before_created_at: null,
+    p_before_photo_id: null,
+    p_limit: 30,
+    p_room_id: roomId
+  }), "peer terminal media page");
+  const ownerChatFailure = ownerChatPage.photos.find((photo) => photo.id === failedPhotoId);
+  const ownerMediaFailure = ownerMediaPage.photos.find((photo) => photo.id === failedPhotoId);
+  assert.equal(ownerChatFailure.processing_status, "rejected");
+  assert.equal(ownerChatFailure.processing_failure_code, "media_video_transcode_failed");
+  assert.equal(ownerChatFailure.duration_ms, 5984);
+  assert.equal(ownerMediaFailure.processing_status, "rejected");
+  assert.equal(ownerMediaFailure.duration_ms, 5984);
+  assert.equal(peerChatPage.photos.some((photo) => photo.id === failedPhotoId), false);
+  assert.equal(peerMediaPage.photos.some((photo) => photo.id === failedPhotoId), false);
+
+  console.log(`PASS: stable early publication, Media-only unread, idempotent readiness, uploader-only terminal failure, and bounded terminal reads (local attach ${localAttachDurationMs} ms)`);
 } finally {
   if (ownerId) await admin.auth.admin.deleteUser(ownerId);
   if (peerId) await admin.auth.admin.deleteUser(peerId);
