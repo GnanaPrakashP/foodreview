@@ -67,6 +67,71 @@ export function mapMemoryStop(stop: MemoryStopRow, namesByUsername: Record<strin
   };
 }
 
+// A dish carries three rating shapes at once: the per-member rows, the legacy
+// `rating` column written when the dish was created, and the viewer's own
+// score. Keep the reconciliation between them in one place — the room read and
+// a freshly created dish both have to arrive at the same numbers.
+export function mapMemoryDish({
+  dish,
+  namesByUsername,
+  ratingRows = [],
+  viewerName = ""
+}: {
+  dish: MemoryDishRow;
+  namesByUsername: Record<string, string>;
+  ratingRows?: MemoryDishRatingRow[];
+  viewerName?: string;
+}): MemoryDish {
+  const legacyRating = dish.rating === null || dish.rating === undefined ? null : Number(dish.rating);
+  const ratings = ratingRows
+    .filter((rating) => rating.rating !== null && Number.isFinite(Number(rating.rating)))
+    .map((rating) => ({
+      id: rating.id,
+      roomId: rating.room_id,
+      dishId: rating.dish_id,
+      ratedBy: rating.rated_by,
+      ratedByDisplayName: namesByUsername[rating.rated_by] ?? rating.rated_by,
+      rating: Number(rating.rating),
+      createdAt: rating.created_at,
+      updatedAt: rating.updated_at
+    }));
+  const effectiveRatings = ratingRows.length > 0
+    ? ratings
+    : legacyRating !== null
+      ? [{
+        id: `legacy:${dish.id}:${dish.added_by}`,
+        roomId: dish.room_id,
+        dishId: dish.id,
+        ratedBy: dish.added_by,
+        ratedByDisplayName: namesByUsername[dish.added_by] ?? dish.added_by,
+        rating: legacyRating,
+        createdAt: dish.created_at,
+        updatedAt: dish.created_at
+      }]
+      : [];
+  const ratingTotal = effectiveRatings.reduce((total, item) => total + item.rating, 0);
+  const averageRating = effectiveRatings.length > 0 ? ratingTotal / effectiveRatings.length : null;
+  const myRating = viewerName
+    ? effectiveRatings.find((rating) => rating.ratedBy === viewerName)?.rating ?? null
+    : null;
+
+  return {
+    id: dish.id,
+    roomId: dish.room_id,
+    stopId: dish.stop_id ?? null,
+    addedBy: dish.added_by,
+    addedByDisplayName: namesByUsername[dish.added_by] ?? dish.added_by,
+    averageRating,
+    dishName: dish.dish_name,
+    myRating,
+    note: dish.note,
+    rating: legacyRating,
+    ratingCount: effectiveRatings.length,
+    ratings: effectiveRatings,
+    createdAt: dish.created_at
+  };
+}
+
 export function mapMemoryPhoto(photo: MemoryPhotoRow, namesByUsername: Record<string, string>): MemoryPhoto {
   return {
     id: photo.id,
@@ -293,57 +358,12 @@ export function mapMemoryRoom({
     stops: [...stops]
       .map((stop) => mapMemoryStop(stop, namesByUsername))
       .sort((a, b) => a.position - b.position || new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
-    dishes: dishes.map((dish): MemoryDish => {
-      const legacyRating = dish.rating === null || dish.rating === undefined ? null : Number(dish.rating);
-      const dishRatingRows = ratingsByDishId[dish.id] ?? [];
-      const ratings = dishRatingRows
-        .filter((rating) => rating.rating !== null && Number.isFinite(Number(rating.rating)))
-        .map((rating) => ({
-        id: rating.id,
-        roomId: rating.room_id,
-        dishId: rating.dish_id,
-        ratedBy: rating.rated_by,
-        ratedByDisplayName: namesByUsername[rating.rated_by] ?? rating.rated_by,
-        rating: Number(rating.rating),
-        createdAt: rating.created_at,
-        updatedAt: rating.updated_at
-      }));
-      const effectiveRatings = dishRatingRows.length > 0
-        ? ratings
-        : legacyRating !== null
-          ? [{
-            id: `legacy:${dish.id}:${dish.added_by}`,
-            roomId: dish.room_id,
-            dishId: dish.id,
-            ratedBy: dish.added_by,
-            ratedByDisplayName: namesByUsername[dish.added_by] ?? dish.added_by,
-            rating: legacyRating,
-            createdAt: dish.created_at,
-            updatedAt: dish.created_at
-          }]
-          : [];
-      const ratingTotal = effectiveRatings.reduce((total, item) => total + item.rating, 0);
-      const averageRating = effectiveRatings.length > 0 ? ratingTotal / effectiveRatings.length : null;
-      const myRating = viewerName
-        ? effectiveRatings.find((rating) => rating.ratedBy === viewerName)?.rating ?? null
-        : null;
-
-      return {
-        id: dish.id,
-        roomId: dish.room_id,
-        stopId: dish.stop_id ?? null,
-        addedBy: dish.added_by,
-        addedByDisplayName: namesByUsername[dish.added_by] ?? dish.added_by,
-        averageRating,
-        dishName: dish.dish_name,
-        myRating,
-        note: dish.note,
-        rating: legacyRating,
-        ratingCount: effectiveRatings.length,
-        ratings: effectiveRatings,
-        createdAt: dish.created_at
-      };
-    }),
+    dishes: dishes.map((dish) => mapMemoryDish({
+      dish,
+      namesByUsername,
+      ratingRows: ratingsByDishId[dish.id] ?? [],
+      viewerName
+    })),
     messages: mapMemoryMessages({
       messages,
       namesByUsername,

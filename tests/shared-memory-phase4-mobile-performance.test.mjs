@@ -1472,12 +1472,18 @@ test("adding a dish uses the dedicated route and returns to the originating room
     /function openFloatingAddDish\(\) \{[\s\S]*?\n  \}/
   )?.[0] ?? "";
   const submitDishBody = memoryAddDishScreen.match(
-    /async function submitDish\(\) \{[\s\S]*?\n  \}/
+    /function submitDish\(\) \{[\s\S]*?\n  \}/
   )?.[0] ?? "";
 
   assert.match(openDishBody, /setFloatingAddMenuOpen\(false\)/);
   assert.match(openDishBody, /pathname: "\/memories\/\[id\]\/add-dish"/);
-  assert.match(submitDishBody, /await addDish\.mutateAsync/);
+  // The insert is fired, not awaited: the mutation puts the dish into the room
+  // before the request leaves, so waiting only held this form open on
+  // "Adding…". A rejection is reported from the catch below, because this
+  // screen is already gone by then.
+  assert.match(submitDishBody, /addDish\.mutateAsync\(\{/);
+  assert.doesNotMatch(submitDishBody, /await addDish\.mutateAsync/);
+  assert.match(submitDishBody, /\.catch\(\(error\) => \{[\s\S]*?Alert\.alert\(/);
   // Popping stays the normal path — the room must not be remounted. `replace`
   // appears only as the no-history fallback, mirroring `close()`, so a cold
   // entry cannot strand the user on the form after a successful add.

@@ -2,6 +2,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { PenLine, Star, Utensils } from "lucide-react-native";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -42,29 +43,35 @@ export default function AddMemoryDishScreen() {
     router.replace({ pathname: "/memories/[id]", params: { id: roomId } });
   }, [roomId, router]);
 
-  async function submitDish() {
+  function submitDish() {
     if (!canAdd) return;
-    try {
-      await addDish.mutateAsync({
-        dishName: dishName.trim(),
-        note: note.trim() || undefined,
-        rating: rating || null
-      });
-      Keyboard.dismiss();
-      // The dish lands in the chat as its own row, so that is where the room
-      // must go — the same handoff media uses. A `tab` param cannot do this on
-      // its own: the room is still mounted underneath and `back()` does not
-      // remount it. The param below only covers a cold entry with nothing to
-      // pop. See requestMemoryRoomTab.
-      requestMemoryRoomTab(roomId, "chat");
-      if (router.canGoBack()) {
-        router.back();
-        return;
-      }
-      router.replace({ pathname: "/memories/[id]", params: { id: roomId, tab: "chat" } });
-    } catch {
-      // The mutation error is rendered below the form.
+    // Fire and leave. The mutation writes the dish into the room before the
+    // request goes out, so Chat already has the card when it appears; waiting
+    // for the insert only held this screen open on "Adding…".
+    addDish.mutateAsync({
+      dishName: dishName.trim(),
+      note: note.trim() || undefined,
+      rating: rating || null
+    }).catch((error) => {
+      // This screen is gone by now, so the failure has to speak for itself. The
+      // mutation has already rolled its optimistic card back out of the room.
+      Alert.alert(
+        "Could not add dish",
+        error instanceof Error ? error.message : "Please try again."
+      );
+    });
+    Keyboard.dismiss();
+    // The dish lands in the chat as its own row, so that is where the room
+    // must go — the same handoff media uses. A `tab` param cannot do this on
+    // its own: the room is still mounted underneath and `back()` does not
+    // remount it. The param below only covers a cold entry with nothing to
+    // pop. See requestMemoryRoomTab.
+    requestMemoryRoomTab(roomId, "chat");
+    if (router.canGoBack()) {
+      router.back();
+      return;
     }
+    router.replace({ pathname: "/memories/[id]", params: { id: roomId, tab: "chat" } });
   }
 
   return (
@@ -73,7 +80,7 @@ export default function AddMemoryDishScreen() {
         actionDisabled={!canAdd}
         actionLabel={addDish.isPending ? "Adding…" : "Add"}
         actionVariant="boxed"
-        onAction={() => void submitDish()}
+        onAction={submitDish}
         onClose={close}
         showDivider={false}
         title=""

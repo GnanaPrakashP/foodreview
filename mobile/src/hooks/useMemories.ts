@@ -57,6 +57,7 @@ import {
   upsertMemoryMessage
 } from "@/services/memoryMessageReconciliation.mjs";
 import { mergeServerMemoryPhoto } from "@/services/memoryPhotoMerge.mjs";
+import { optimisticMemoryDish } from "@/services/memoryDishDraft.mjs";
 import {
   isDismissedMemoryOutboxMessage,
   markDismissedMemoryOutboxMessage,
@@ -98,11 +99,11 @@ import {
 } from "@/services/memoryDishRatingCoordinator";
 import { getOccasionTheme } from "@/features/occasions/occasionThemes";
 import { useSessionStore } from "@/stores/sessionStore";
-import type { MemoryDishRating, MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary, MemoryStop } from "@/types/models";
+import type { MemoryDish, MemoryDishRating, MemoryMessage, MemoryPhoto, MemoryRoom, MemoryRoomSummary, MemoryStop } from "@/types/models";
 import { getActiveCacheGeneration, isCacheGenerationActive } from "@/security/cacheOwnership";
 import { registerSensitiveResourceCleanup } from "@/security/sensitiveResourceRegistry";
 import { captureMobileError, recordMobileFlow } from "@/observability/mobileTelemetry";
-import { createRequestId } from "@/services/installIdentity";
+import { createRequestId, createUuid } from "@/services/installIdentity";
 import { recordMemoryChatPlacement } from "@/services/memoryChatPlacementDiagnostics.mjs";
 import { completeRecoveredMediaAssets, mediaProcessingIssueKind } from "@/services/mediaPipeline";
 import {
@@ -704,6 +705,30 @@ registerSensitiveResourceCleanup(() => {
   recentMemoryStopDeleteExpiries.clear();
 });
 
+// An unconfirmed dish lives only in the query cache — there is no dish outbox,
+// so persisting it would strand a phantom if the app were killed mid-request.
+// That makes it vulnerable to the SQLite-first replay any refetch performs, so
+// hold it here and re-apply it to every projection until the insert lands.
+const pendingMemoryDishAdds = new Map<string, { dish: MemoryDish; expiresAt: number }>();
+registerSensitiveResourceCleanup(() => pendingMemoryDishAdds.clear());
+
+function withPendingMemoryDishAdds(room: MemoryRoom) {
+  const now = Date.now();
+  for (const [key, entry] of pendingMemoryDishAdds) {
+    if (entry.expiresAt <= now) pendingMemoryDishAdds.delete(key);
+  }
+  let dishes = room.dishes;
+  for (const [key, entry] of pendingMemoryDishAdds) {
+    if (!key.startsWith(`${room.id}:`)) continue;
+    if (dishes.some((dish) => dish.id === entry.dish.id)) continue;
+    // A dish discarded inside its own send window stays discarded; the delete
+    // tombstone above has already removed it from this projection.
+    if ((recentMemoryDishDeleteExpiries.get(key) ?? 0) > now) continue;
+    dishes = upsertMemoryDish(dishes, entry.dish);
+  }
+  return dishes === room.dishes ? room : { ...room, dishes };
+}
+
 function withoutRecentlyDeletedMemoryDishes(room: MemoryRoom) {
   const now = Date.now();
   for (const [key, expiresAt] of recentMemoryDishDeleteExpiries) {
@@ -846,6 +871,15 @@ function upsertMemoryStop(stops: MemoryStop[], stop: MemoryStop) {
     ...stops.filter((current) => current.id !== stop.id),
     stop
   ]);
+}
+
+// Chat renders dishes as their own timeline rows in server order: created_at,
+// then id.
+function upsertMemoryDish(dishes: MemoryDish[], dish: MemoryDish) {
+  return [...dishes.filter((current) => current.id !== dish.id), dish].sort((first, second) => (
+    timeFromIso(first.createdAt) - timeFromIso(second.createdAt) ||
+    first.id.localeCompare(second.id)
+  ));
 }
 
 function uniqueMemoryPlaceNames(names: string[]) {
@@ -1462,7 +1496,7 @@ function preserveRecentMediaAttachments(previous: unknown, next: unknown) {
     : room;
   if (!previousRoom) {
     return withoutDismissedMemoryOutboxMessages(
-      applyPendingRatings(withoutRecentlyDeletedMemoryStops(withoutRecentlyDeletedMemoryDishes(applyPendingMemoryDeletes(nextRoom))))
+      applyPendingRatings(withPendingMemoryDishAdds(withoutRecentlyDeletedMemoryStops(withoutRecentlyDeletedMemoryDishes(applyPendingMemoryDeletes(nextRoom)))))
     );
   }
 
@@ -1473,11 +1507,11 @@ function preserveRecentMediaAttachments(previous: unknown, next: unknown) {
     photosById.set(photo.id, mergeServerMemoryPhoto(photosById.get(photo.id), photo));
   }
   return withoutDismissedMemoryOutboxMessages(
-    applyPendingRatings(withoutRecentlyDeletedMemoryStops(withoutRecentlyDeletedMemoryDishes(applyPendingMemoryDeletes({
+    applyPendingRatings(withPendingMemoryDishAdds(withoutRecentlyDeletedMemoryStops(withoutRecentlyDeletedMemoryDishes(applyPendingMemoryDeletes({
       ...nextRoom,
       messages: mergeMemoryMessageSnapshot(previousRoom.messages, nextRoom.messages),
       photos: sortMemoryPhotos(Array.from(photosById.values()))
-    }))))
+    })))))
   );
 }
 
@@ -3149,13 +3183,123 @@ export function useDeleteMemoryPhotoMutation(roomId: string) {
   });
 }
 
+// Stamped onto the shared input object so onMutate and the request agree on one
+// identity, the same way prepareMemoryPhotoAssets stamps an upload batch id.
+function prepareMemoryDishInput(input: Omit<AddMemoryDishInput, "roomId">) {
+  const dishId = input.dishId ?? createUuid();
+  input.dishId = dishId;
+  return dishId;
+}
+
 export function useAddMemoryDishMutation(roomId: string) {
   const queryClient = useQueryClient();
+  const profile = useSessionStore((state) => state.profile);
+  const forgetPendingDish = (dishId: string | undefined) => {
+    if (dishId) pendingMemoryDishAdds.delete(`${roomId}:${dishId}`);
+  };
   return useMutation({
-    mutationFn: (input: Omit<AddMemoryDishInput, "roomId">) => addMemoryDish({ ...input, roomId }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: memoryKeys.detail(roomId) });
-      queryClient.invalidateQueries({ queryKey: memoryKeys.list });
+    mutationFn: (input: Omit<AddMemoryDishInput, "roomId">) => {
+      prepareMemoryDishInput(input);
+      return addMemoryDish({ ...input, roomId });
+    },
+    onMutate: async (input) => {
+      const dishId = prepareMemoryDishInput(input);
+      if (!profile?.username) return { dishId };
+
+      const detailKey = memoryKeys.detail(roomId);
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: detailKey }),
+        queryClient.cancelQueries({ queryKey: memoryKeys.list })
+      ]);
+
+      const optimisticDish = optimisticMemoryDish({
+        addedBy: profile.username,
+        addedByDisplayName: profile.displayName || profile.username,
+        createdAt: new Date().toISOString(),
+        dishId,
+        dishName: input.dishName,
+        note: input.note ?? null,
+        rating: input.rating ?? null,
+        roomId
+      });
+      pendingMemoryDishAdds.set(`${roomId}:${dishId}`, {
+        dish: optimisticDish,
+        expiresAt: Date.now() + 60_000
+      });
+      queryClient.setQueryData<MemoryRoom>(detailKey, (current) => (
+        current ? { ...current, dishes: upsertMemoryDish(current.dishes, optimisticDish) } : current
+      ));
+      setMemorySummaryPages(queryClient, (current) => current?.map((memory) => (
+        memory.id === roomId ? { ...memory, dishCount: memory.dishCount + 1 } : memory
+      )));
+      return { dishId, optimistic: true };
+    },
+    onError: (_error, input, context) => {
+      const dishId = context?.dishId ?? input.dishId;
+      forgetPendingDish(dishId);
+      if (!context?.optimistic || !dishId) return;
+      queryClient.setQueryData<MemoryRoom>(memoryKeys.detail(roomId), (current) => (
+        current ? { ...current, dishes: current.dishes.filter((dish) => dish.id !== dishId) } : current
+      ));
+      setMemorySummaryPages(queryClient, (current) => current?.map((memory) => (
+        memory.id === roomId
+          ? { ...memory, dishCount: Math.max(0, memory.dishCount - 1) }
+          : memory
+      )));
+    },
+    onSuccess: async (createdDish, _input, context) => {
+      const detailKey = memoryKeys.detail(roomId);
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: detailKey }),
+        queryClient.cancelQueries({ queryKey: memoryKeys.list })
+      ]);
+
+      // The service knows the author's username, not the name the room shows.
+      const dish = profile?.username && createdDish.addedBy === profile.username
+        ? { ...createdDish, addedByDisplayName: profile.displayName || profile.username }
+        : createdDish;
+      const currentRoom = queryClient.getQueryData<MemoryRoom>(detailKey);
+      const nextRoom = currentRoom
+        ? { ...currentRoom, dishes: upsertMemoryDish(currentRoom.dishes, dish) }
+        : undefined;
+      if (nextRoom) queryClient.setQueryData(detailKey, nextRoom);
+      // The stored row has taken over. Stop re-applying the unconfirmed one, or
+      // a peer's delete arriving inside the window would resurrect it.
+      forgetPendingDish(context?.dishId ?? createdDish.id);
+
+      let updatedSummary: MemoryRoomSummary | undefined;
+      setMemorySummaryPages(queryClient, (current) => current?.map((memory) => {
+        if (memory.id !== roomId) return memory;
+        // onMutate already counted the dish whenever it could build the
+        // optimistic row; only a send without a signed-in profile counts here.
+        updatedSummary = context?.optimistic ? memory : { ...memory, dishCount: memory.dishCount + 1 };
+        return updatedSummary;
+      }));
+
+      await Promise.all([
+        nextRoom
+          ? saveOfflineMemoryRoom(nextRoom).catch((error) => {
+            captureMobileError("memory.dish_room_persist_failed", error, { roomId });
+          })
+          : Promise.resolve(),
+        updatedSummary
+          ? saveOfflineMemorySummaries([updatedSummary]).catch((error) => {
+            captureMobileError("memory.dish_summary_persist_failed", error, { roomId });
+          })
+          : Promise.resolve()
+      ]);
+
+      if (!nextRoom) {
+        // Nothing to add the dish to — rebuild from the server instead.
+        void queryClient.invalidateQueries({ queryKey: detailKey });
+      }
+      // Do not invalidate a populated room. The SQLite-first query would replay
+      // its pre-mutation snapshot and hide the dish that was just added until a
+      // whole server reconcile came back, which is exactly the gap between
+      // landing on Chat and the dish card appearing. The durable write above is
+      // what keeps it through that replay; Realtime and incremental
+      // reconciliation still converge everything else. Same rule as
+      // useCreateMemoryStopMutation.
     }
   });
 }

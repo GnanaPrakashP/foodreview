@@ -5,7 +5,7 @@ import { recordMobileFlow } from "@/observability/mobileTelemetry";
 import { supabase } from "@/api/supabase";
 import { MEMORY_TEXT_MAX_LENGTH } from "@/constants/memoryLimits";
 import { MEMORY_MEDIA_SIGNED_URL_TTL_SECONDS } from "@/constants/memoryMediaPolicy";
-import { mapMemoryMessages, mapMemoryPhoto, mapMemoryPhotos, mapMemoryRoom, mapMemoryStop, memoryPlaceNamesForRoom } from "@/services/memoryMapper";
+import { mapMemoryDish, mapMemoryMessages, mapMemoryPhoto, mapMemoryPhotos, mapMemoryRoom, mapMemoryStop, memoryPlaceNamesForRoom } from "@/services/memoryMapper";
 import {
   mergeMemoryMessageSnapshot,
   memoryMessageServerId,
@@ -106,6 +106,8 @@ const MEMORY_PHOTO_SELECT = "id, room_id, message_id, uploader_name, uploader_id
 const MEMORY_PHOTO_SELECT_WITHOUT_PHASE2 = "id, room_id, message_id, uploader_name, public_url, storage_path, media_type, image_width, image_height, position, created_at";
 const MEMORY_PHOTO_SELECT_WITHOUT_DIMENSIONS = "id, room_id, message_id, uploader_name, public_url, storage_path, media_type, position, created_at";
 const MEMORY_PHOTO_SELECT_LEGACY = "id, room_id, uploader_name, public_url, storage_path, created_at";
+const MEMORY_DISH_SELECT = "id, room_id, stop_id, added_by, dish_name, rating, note, created_at";
+const MEMORY_DISH_RATING_SELECT = "id, room_id, dish_id, rated_by, rating, created_at, updated_at";
 const MEMORY_STOP_SELECT = "id, room_id, stop_type, name, note, place_id, position, created_by, created_at";
 // place_id ships in migration 202608020001. Until it is applied both the select
 // and the insert fail, so every stop read would degrade to the cached list and
@@ -214,6 +216,8 @@ export type AddMemoryPhotoResult = {
 };
 
 export type AddMemoryDishInput = {
+  // Minted on the device so the optimistic card and the stored row are one row.
+  dishId?: string;
   dishName: string;
   note?: string;
   rating?: number | null;
@@ -2252,19 +2256,25 @@ export async function addMemoryDish(input: AddMemoryDishInput) {
     dish_name: dishName,
     note,
     rating,
-    room_id: input.roomId
+    room_id: input.roomId,
+    ...(input.dishId ? { id: input.dishId } : {})
   };
 
+  // The created row is returned, not just its id: the room projection is
+  // SQLite-first, so a caller that only invalidates cannot show the dish until
+  // a whole server reconcile lands. Adding a place solves this the same way.
   const { data: dish, error } = await supabase
     .from("shared_memory_dishes")
     .insert(dishInsert)
-    .select("id")
-    .single<{ id: string }>();
+    .select(MEMORY_DISH_SELECT)
+    .single<MemoryDishRow>();
 
   if (error) throw memoryTablesError(error);
-  if (rating !== null && dish?.id) {
+  if (!dish) throw new Error("Could not add this dish");
+  let ratingRow: MemoryDishRatingRow | null = null;
+  if (rating !== null) {
     const now = new Date().toISOString();
-    const { error: ratingError } = await supabase
+    const { data: savedRating, error: ratingError } = await supabase
       .from("shared_memory_dish_ratings")
       .upsert({
         dish_id: dish.id,
@@ -2272,13 +2282,23 @@ export async function addMemoryDish(input: AddMemoryDishInput) {
         rating,
         room_id: input.roomId,
         updated_at: now
-      }, { onConflict: "dish_id,rated_by" });
+      }, { onConflict: "dish_id,rated_by" })
+      .select(MEMORY_DISH_RATING_SELECT)
+      .maybeSingle<MemoryDishRatingRow>();
 
     if (ratingError && !isMissingMemoryDishRatingsTable(ratingError)) {
       throw memoryTablesError(ratingError);
     }
+    // Without the ratings table the legacy `rating` column still carries the
+    // score, and mapMemoryDish reads it.
+    ratingRow = savedRating ?? null;
   }
-  return { ok: true };
+  return mapMemoryDish({
+    dish,
+    namesByUsername: { [addedBy]: addedBy },
+    ratingRows: ratingRow ? [ratingRow] : [],
+    viewerName: addedBy
+  });
 }
 
 export async function setMemoryDishRating(input: SetMemoryDishRatingInput) {
