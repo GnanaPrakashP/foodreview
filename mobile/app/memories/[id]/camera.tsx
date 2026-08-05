@@ -3,6 +3,10 @@ import { useEffect, useMemo } from "react";
 import { CameraScreen } from "@/components/memories/camera/CameraScreen";
 import { MemoryCenterState } from "@/components/memories/MemoryDetailSections";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
+import {
+  MEMORY_VIDEO_CAPTURE_BITRATE,
+  MEMORY_VIDEO_CAPTURE_QUALITY
+} from "@/constants/memoryMediaPolicy";
 import { useMemoryRoomQuery } from "@/hooks/useMemories";
 import { saveMemoryCapture } from "@/services/memoryCaptureSession";
 import {
@@ -57,6 +61,10 @@ export default function MemoryCameraRoute() {
 
   return (
     <CameraScreen
+      // A room clip is watched in a chat bubble and has to come back quickly;
+      // the worker's time tracks source bytes almost linearly.
+      videoBitrate={MEMORY_VIDEO_CAPTURE_BITRATE}
+      videoQuality={MEMORY_VIDEO_CAPTURE_QUALITY}
       onClose={() => {
         recordMemoryRoomJourney(journeySession, "CAMERA_CANCELLED", {
           screenState: "usable",

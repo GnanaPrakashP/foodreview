@@ -19,6 +19,16 @@ export const MEMORY_VIDEO_MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 // Duration/resolution are validated from declared mobile metadata in Phase 2.1.
 // Byte-level media probing belongs in the later media-processing pipeline.
 export const MEMORY_VIDEO_MAX_DURATION_MS = 60_000;
+// Capture settings, not a post-capture transcode: this app deliberately has no
+// native video compressor (see tests/mobile-memory-video-compression.test.mjs),
+// so the only place a room video can be made smaller on the device is where it
+// is recorded. 1080p at 8 Mbps produced ~1 MB per second of clip, and measured
+// worker time tracks source bytes almost linearly — 0.5-3.5 MB finished in
+// 8-10 s while 4-6.3 MB took 14-19 s. 720p at 4 Mbps roughly quarters that
+// input. The server re-encodes everything to a 1600 px canonical at CRF 23
+// regardless, so the source only has to survive one transcode.
+export const MEMORY_VIDEO_CAPTURE_QUALITY = "720p" as const;
+export const MEMORY_VIDEO_CAPTURE_BITRATE = 4_000_000;
 export const MEMORY_AUDIO_MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 export const MEMORY_AUDIO_MAX_DURATION_MS = 60_000;
 

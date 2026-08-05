@@ -1,5 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { Camera, CameraView, type FocusMode } from "expo-camera";
+import { Camera, CameraView, type FocusMode, type VideoQuality } from "expo-camera";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
@@ -102,7 +102,12 @@ export function CameraScreen({
   onClose,
   onGalleryAssets,
   photoGuideAspectRatio,
-  photoGuideFrame: photoGuideFrameOverride
+  photoGuideFrame: photoGuideFrameOverride,
+  // Posts keep the full-quality capture; a surface that values a fast round
+  // trip over maximum detail passes its own profile. This is the only place a
+  // video can be made smaller on the device — there is no native compressor.
+  videoBitrate = 8_000_000,
+  videoQuality = "1080p"
 }: {
   allowVideo?: boolean;
   autoCropPhotoToGuide?: boolean;
@@ -115,6 +120,8 @@ export function CameraScreen({
   photoGuideAspectRatio?: number;
   /** Exact window-coordinate frame for the crop guide; wins over the centered frame derived from photoGuideAspectRatio. */
   photoGuideFrame?: CropGuideFrame | null;
+  videoBitrate?: number;
+  videoQuality?: VideoQuality;
 }) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -558,8 +565,8 @@ export function CameraScreen({
           ref={cameraRef}
           responsiveOrientationWhenOrientationLocked
           style={styles.cameraPreview}
-          videoBitrate={8_000_000}
-          videoQuality="1080p"
+          videoBitrate={videoBitrate}
+          videoQuality={videoQuality}
           videoStabilizationMode="auto"
           zoom={zoom}
         />

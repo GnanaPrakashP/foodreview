@@ -19,7 +19,7 @@ services:
       - key: APP_ENVIRONMENT
         value: production
       - key: APP_MIGRATION_HEAD
-        value: "202608040002"
+        value: "202608050001"
       - key: APP_RELEASE
         sync: false
       - key: NEXT_PUBLIC_SUPABASE_URL
@@ -44,8 +44,12 @@ services:
         value: "1"
       - key: MEDIA_WORKER_BATCH_LIMIT
         value: "4"
+      # Idle poll gap, so it is dead time in front of every upload: measured
+      # 0.2-4.8 s of queue wait on production jobs whose actual work was
+      # 8-19 s. The loop only claims work, and concurrency stays at 1, so
+      # shortening it costs nothing but a few more empty claims per minute.
       - key: MEDIA_WORKER_INTERVAL_MS
-        value: "5000"
+        value: "1500"
       - key: MEDIA_WORKER_LEASE_SECONDS
         value: "300"
       - key: MEDIA_WORKER_HEARTBEAT_MS
