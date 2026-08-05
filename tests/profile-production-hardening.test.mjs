@@ -10,6 +10,10 @@ const reviewMedia = readFileSync("lib/server/review-media.ts", "utf8");
 const uploadIntentRoute = readFileSync("app/api/mobile/review-media/upload-intent/route.ts", "utf8");
 const finalizeRoute = readFileSync("app/api/mobile/review-media/finalize-upload/route.ts", "utf8");
 const reviewsRoute = readFileSync("app/api/reviews/route.ts", "utf8");
+const reviewMediaAttachMigration = readFileSync(
+  "supabase/migrations/202607260002_shared_media_pipeline_hardening.sql",
+  "utf8"
+);
 const reviewDeleteRoute = readFileSync("app/api/reviews/[id]/route.ts", "utf8");
 const deleteAccountRoute = readFileSync("app/api/delete-account/route.ts", "utf8");
 const accountDeletionMigration = readFileSync("supabase/migrations/202607130002_complete_account_deletion.sql", "utf8");
@@ -131,11 +135,18 @@ test("review creation accepts only visibility-matched private media assets and d
   assert.match(reviewsRoute, /canonical\.public_url !== null/);
   assert.match(reviewsRoute, /asset\.consumed_at !== null/);
   assert.match(reviewsRoute, /Legacy post media must be uploaded again/);
-  assert.match(reviewsRoute, /media_asset_id: p\.mediaAssetId/);
   assert.match(reviewsRoute, /asset\.owner_id !== actor\.userId/);
   assert.match(reviewsRoute, /mimeType: canonical\.mime_type/);
   assert.match(reviewsRoute, /sizeBytes: canonical\.file_size_bytes/);
-  assert.match(reviewsRoute, /size_bytes: p\.sizeBytes/);
+  // Linking moved out of this route and into attach_review_media_assets_v1, so
+  // the same guarantees are asserted where they now live. The stored row is
+  // built from the asset and its canonical derivative — the request body never
+  // supplies a path, a URL or a size.
+  assert.match(reviewsRoute, /rpc\("attach_review_media_assets_v1"/);
+  assert.match(reviewMediaAttachMigration, /create or replace function public\.attach_review_media_assets_v1/);
+  assert.match(reviewMediaAttachMigration, /if auth\.role\(\) <> 'service_role' then/);
+  assert.match(reviewMediaAttachMigration, /insert into public\.review_photos[\s\S]*?select\s*\n\s*p_review_id,\s*\n\s*canonical\.storage_path,\s*\n\s*null,/);
+  assert.match(reviewMediaAttachMigration, /canonical\.file_size_bytes,\s*\n\s*asset\.id,/);
   assert.match(reviewsRoute, /async function cleanupUnusedReviewMedia/);
   assert.match(reviewsRoute, /admin\.storage\.from\(REVIEW_MEDIA_BUCKET\)\.remove\(storagePaths\)/);
   assert.match(reviewsRoute, /recordAccountMediaCleanupJob/);
@@ -143,6 +154,18 @@ test("review creation accepts only visibility-matched private media assets and d
   assert.match(reviewsRoute, /cleanupUnusedReviewMedia\(writeDb, actor\.userId, validatedMedia\.media\)/);
   assert.match(reviewsRoute, /await writeDb\.from\("reviews"\)\.delete\(\)\.eq\("id", data\.id\)/);
   assert.doesNotMatch(reviewsRoute, /publicUrl:\s*item|storagePath:\s*item|photoUrl:\s*item/);
+
+  // The database re-checks every rule the route checked, so a caller that
+  // reached the RPC by another path still cannot mix visibilities, borrow
+  // someone else's asset, or attach one that is unprocessed or already spent.
+  assert.match(reviewMediaAttachMigration, /asset\.owner_id = p_owner_id\s*\n\s*and asset\.owner_name = p_owner_name/);
+  assert.match(reviewMediaAttachMigration, /and asset\.surface = 'post'\s*\n\s*and asset\.status = 'ready'/);
+  assert.match(reviewMediaAttachMigration, /and asset\.moderation_status = 'approved'\s*\n\s*and asset\.consumed_at is null/);
+  assert.match(
+    reviewMediaAttachMigration,
+    /access_class = case v_visibility\s*\n\s*when 'public' then 'public_post'\s*\n\s*when 'circle' then 'circle_post'\s*\n\s*when 'me' then 'private_post'\s*\n\s*else '__invalid__'/
+  );
+  assert.match(reviewMediaAttachMigration, /canonical\.bucket_id = 'media-private'\s*\n\s*and canonical\.public_url is null/);
 });
 
 test("mobile post and avatar uploads use the authorized upload/finalize flow", () => {

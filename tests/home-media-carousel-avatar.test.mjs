@@ -129,7 +129,25 @@ test("13 pending failed rejected unstable or consumed media cannot publish", () 
 test("14 one verified asset is linked and the guarded draft becomes active", () => {
   assert.match(publishRoute, /requires_ready_media: true/);
   assert.match(publishRoute, /status: "draft"/);
-  assert.match(publishRoute, /update\(\{ status: "active" \}\)/);
+  // Publication moved into attach_review_media_assets_v1, which links the
+  // verified assets and flips the draft in the same transaction: a post can no
+  // longer be visible with media that was never linked, and a failed link
+  // leaves nothing behind.
+  assert.match(publishRoute, /rpc\("attach_review_media_assets_v1"/);
+  assert.match(publishRoute, /if \(attachError \|\| attached !== true\)/);
+  assert.match(publishRoute, /await writeDb\.from\("reviews"\)\.delete\(\)\.eq\("id", data\.id\)/);
+  assert.doesNotMatch(publishRoute, /update\(\{ status: "active" \}\)/);
+
+  const attachMigration = source("supabase/migrations/202607260002_shared_media_pipeline_hardening.sql");
+  assert.match(attachMigration, /insert into public\.review_photos/);
+  assert.match(
+    attachMigration,
+    /update public\.reviews review\s*\n\s*set status = 'active'\s*\n\s*where review\.id = p_review_id[\s\S]*?and review\.status = 'draft'/
+  );
+  // Every step is counted, so a partially linked post never becomes active.
+  assert.match(attachMigration, /raise exception 'review_media_attach_insert_incomplete'/);
+  assert.match(attachMigration, /raise exception 'review_media_attach_consume_incomplete'/);
+  assert.match(attachMigration, /raise exception 'review_media_attach_publish_failed'/);
 });
 
 test("15 deletion of the last ready link is guarded by a deferred constraint trigger", () => {
