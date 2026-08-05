@@ -21,11 +21,38 @@ test("a room clip is captured small enough to come back quickly", () => {
   assert.match(roomCamera, /videoQuality=\{MEMORY_VIDEO_CAPTURE_QUALITY\}/);
 });
 
-test("the feed keeps its full-quality capture", () => {
-  // The room and the share flow share one camera. Only the room opts down.
+test("the room and the feed each state their own capture profile", () => {
+  // One shared camera, two surfaces with different ceilings. Neither relies on
+  // the component default, which exists only for a future caller.
   assert.match(camera, /videoBitrate = 8_000_000/);
   assert.match(camera, /videoQuality = "1080p"/);
-  assert.doesNotMatch(shareCamera, /videoQuality|videoBitrate/);
+  assert.match(shareCamera, /videoBitrate=\{POST_VIDEO_CAPTURE_BITRATE\}/);
+  assert.match(shareCamera, /videoQuality=\{POST_VIDEO_CAPTURE_QUALITY\}/);
+});
+
+test("a full-length post recording fits the post byte ceiling", () => {
+  const postPolicy = source("mobile/src/constants/postMediaPolicy.ts");
+  const worker = source("lib/server/media-pipeline.ts");
+  const pipeline = source("mobile/src/services/mediaPipeline.ts");
+
+  // The device mirror must not claim more headroom than the server allows.
+  assert.match(worker, /post: \{ image: 10 \* 1024 \* 1024, video: 20 \* 1024 \* 1024 \}/);
+  assert.match(postPolicy, /POST_VIDEO_MAX_UPLOAD_BYTES = 20 \* 1024 \* 1024/);
+  assert.match(postPolicy, /POST_VIDEO_MAX_DURATION_MS = 30_000/);
+
+  // 30 s of video plus AAC audio has to land under the ceiling with room for a
+  // device encoder to overshoot on a complex scene.
+  const bitrate = Number(/POST_VIDEO_CAPTURE_BITRATE = ([0-9_]+)/.exec(postPolicy)[1].replaceAll("_", ""));
+  const audioBitsPerSecond = 128_000;
+  const worstCaseBytes = ((bitrate + audioBitsPerSecond) * 30 / 8) * 1.2;
+  assert.ok(
+    worstCaseBytes < 20 * 1024 * 1024,
+    `a 30 s take at ${bitrate} bps could reach ${Math.round(worstCaseBytes / 1048576)} MB`
+  );
+
+  // And an oversized pick is refused before an intent is ever created.
+  assert.match(pipeline, /input\.surface === "post" && fileSizeBytes > postMediaMaxUploadBytes\(mediaKind\)/);
+  assert.match(pipeline, /This video is too large to post/);
 });
 
 test("the capture profile stays the only device-side video reduction", () => {

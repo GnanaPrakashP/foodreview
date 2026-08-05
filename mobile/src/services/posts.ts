@@ -3,7 +3,12 @@ import { apiBaseUrl, apiUrl } from "@/api/config";
 import { supabase } from "@/api/supabase";
 import { authorizedApiHeaders } from "@/api/client";
 import { normalizeDishInput } from "@/services/dishNormalizer";
-import { completeRecoveredMediaUploads, uploadPostMediaAsset, type MediaCropRect } from "@/services/mediaPipeline";
+import {
+  completeRecoveredMediaUploads,
+  uploadPostMediaAsset,
+  waitForReadyMediaAssets,
+  type MediaCropRect
+} from "@/services/mediaPipeline";
 import { getCurrentUserProfile } from "@/services/profiles";
 import type { FoodItem, Visibility } from "@/types/models";
 
@@ -145,6 +150,8 @@ async function uploadOneWithProgress(
   const mediaType = resolveMediaType(media);
   const uploaded = await uploadPostMediaAsset({
     cropRect: media.cropRect,
+    // The batch waits for every asset together once all of them are queued.
+    deferReadyWait: true,
     durationMs: media.durationMs,
     fileSize: media.fileSize,
     height: media.height,
@@ -169,6 +176,13 @@ async function uploadOneWithProgress(
   };
 }
 
+// Uploads stay one at a time — they share one uplink, and the worker processes
+// one asset at a time regardless — but no item waits for its own processing any
+// more. Finalizing an upload is what queues the job, so item one is already
+// transcoding while item two is still sending, and every asset is then awaited
+// together in a single poll cadence.
+const UPLOAD_PHASE_SHARE = 0.9;
+
 async function uploadPostMediaItems(items: CreatePostMediaInput[], visibility: Visibility, onUploadProgress?: (progress: number) => void) {
   const uploaded: UploadedMedia[] = [];
   const total = Math.max(1, items.length);
@@ -176,13 +190,34 @@ async function uploadPostMediaItems(items: CreatePostMediaInput[], visibility: V
 
   for (const [index, media] of items.entries()) {
     const item = await uploadOneWithProgress(media, visibility, (itemProgress) => {
-      onUploadProgress?.((index + Math.max(0, Math.min(itemProgress, 1))) / total);
+      const itemShare = (index + Math.max(0, Math.min(itemProgress, 1))) / total;
+      onUploadProgress?.(itemShare * UPLOAD_PHASE_SHARE);
     });
     uploaded.push(item);
-    onUploadProgress?.((index + 1) / total);
+    onUploadProgress?.(((index + 1) / total) * UPLOAD_PHASE_SHARE);
   }
 
-  return uploaded;
+  const ready = await waitForReadyMediaAssets(
+    uploaded.map((item) => item.recoveryId),
+    (waitProgress) => {
+      onUploadProgress?.(UPLOAD_PHASE_SHARE + Math.max(0, Math.min(waitProgress, 1)) * (1 - UPLOAD_PHASE_SHARE));
+    }
+  );
+  onUploadProgress?.(1);
+
+  // The canonical derivative is authoritative for what was actually stored, so
+  // adopt its dimensions and size exactly as the per-item wait used to.
+  return uploaded.map((item) => {
+    const canonical = ready.get(item.recoveryId);
+    if (!canonical) return item;
+    return {
+      ...item,
+      height: canonical.height ?? item.height,
+      mimeType: canonical.mimeType,
+      sizeBytes: canonical.fileSizeBytes,
+      width: canonical.width ?? item.width
+    };
+  });
 }
 
 async function createReviewViaApi(input: CreatePostInput, uploaded: UploadedMedia[]) {

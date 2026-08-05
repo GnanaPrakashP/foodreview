@@ -4,6 +4,7 @@ import { Platform } from "react-native";
 import { apiBaseUrl, apiUrl } from "@/api/config";
 import { authorizedApiHeaders } from "@/api/client";
 import { resolvedSupabaseAnonKey, resolvedSupabaseUrl, supabase } from "@/api/supabase";
+import { postMediaMaxUploadBytes } from "@/constants/postMediaPolicy";
 import { stageAccountFile } from "@/services/accountFileStore";
 import {
   createPendingMediaUpload,
@@ -100,6 +101,10 @@ export function mediaProcessingIssueKind(error: unknown): MediaProcessingIssueKi
 
 export type UploadPostMediaAssetInput = {
   cropRect?: MediaCropRect | null;
+  // Return once the source is durably queued instead of waiting out the
+  // worker. A multi-item post uses this so item two uploads while item one
+  // transcodes, and then waits for every asset in one pass.
+  deferReadyWait?: boolean;
   durationMs?: number | null;
   fileSize?: number | null;
   height?: number | null;
@@ -521,6 +526,92 @@ async function waitForReadyMedia(record: PendingMediaUploadRecord, onProgress?: 
   }
 }
 
+// One poll cadence for a whole batch. Waiting per item cost the backoff twice
+// over: each asset started its own 1.5s-to-8s ladder, and they ran one after
+// another, so a four-photo post could lose half a minute purely to detection
+// lag after the server had already finished. The status endpoint has always
+// accepted several ids; this asks about all of them at once.
+export async function waitForReadyMediaAssets(
+  recoveryIds: string[],
+  onProgress?: (progress: number) => void
+): Promise<Map<string, { fileSizeBytes: number; height: number | null; mimeType: string; width: number | null }>> {
+  const startedAt = Date.now();
+  const records = pendingMediaUploads();
+  const pending = new Map<string, PendingMediaUploadRecord>();
+  for (const recoveryId of recoveryIds) {
+    const record = records.find((item) => item.localUploadId === recoveryId);
+    if (!record?.assetId) throw new Error("Media upload intent is missing.");
+    pending.set(recoveryId, record);
+  }
+  const ready = new Map<string, { fileSizeBytes: number; height: number | null; mimeType: string; width: number | null }>();
+  // A record that already reached `ready` — a resumed upload, or a retry after
+  // the review request failed — must not be polled for again.
+  for (const [recoveryId, record] of pending) {
+    if (record.state === "ready" && record.readyResult) {
+      ready.set(recoveryId, record.readyResult);
+      pending.delete(recoveryId);
+    }
+  }
+  if (pending.size === 0) {
+    onProgress?.(1);
+    return ready;
+  }
+
+  const generation = getActiveCacheGeneration();
+  const ownerScope = getActiveCacheOwner()?.scope;
+  const controller = new AbortController();
+  activePollControllers.add(controller);
+  try {
+    for (let attempt = 0; attempt < MEDIA_STATUS_MAX_POLLS; attempt += 1) {
+      if (!ownerScope || getActiveCacheOwner()?.scope !== ownerScope || !isCacheGenerationActive(generation)) {
+        throw new Error("Media upload account changed.");
+      }
+      const assetIds = Array.from(pending.values(), (record) => record.assetId as string);
+      const assets = await fetchMediaStatuses(assetIds, controller.signal);
+      for (const [recoveryId, record] of Array.from(pending)) {
+        const asset = assets.find((item) => item.assetId === record.assetId);
+        if (!asset) continue;
+        // Throws on a terminal failure, exactly as the single-asset wait does:
+        // one unusable item means the post cannot be created.
+        const canonical = await applyServerMediaStatus(record, asset);
+        if (!canonical) continue;
+        ready.set(recoveryId, {
+          fileSizeBytes: canonical.file_size_bytes,
+          height: canonical.height,
+          mimeType: canonical.mime_type,
+          width: canonical.width
+        });
+        pending.delete(recoveryId);
+      }
+      if (pending.size === 0) {
+        recordMobileFlow("media.processing_wait_batch", Date.now() - startedAt, "success", {
+          asset_count: recoveryIds.length
+        });
+        onProgress?.(1);
+        return ready;
+      }
+      onProgress?.(0.92 + Math.min(0.07, attempt / MEDIA_STATUS_MAX_POLLS * 0.07));
+      const delay = Math.min(MEDIA_STATUS_MAX_POLL_MS, MEDIA_STATUS_INITIAL_POLL_MS * Math.pow(1.4, attempt));
+      await sleep(Math.round(delay));
+    }
+    for (const record of pending.values()) {
+      updatePendingMediaUpload(record.localUploadId, {
+        lastCheckedAt: Date.now(),
+        state: "processing_delayed"
+      });
+    }
+    throw new MediaProcessingIssue("delayed", "Media is still processing. Try sharing again in a moment.");
+  } catch (error) {
+    recordMobileFlow("media.processing_wait_batch", Date.now() - startedAt, "failure", {
+      asset_count: recoveryIds.length
+    });
+    captureMobileError("media.processing_wait_batch_failed", error);
+    throw error;
+  } finally {
+    activePollControllers.delete(controller);
+  }
+}
+
 async function waitForReadyAvatar(assetId: string, onProgress?: (progress: number) => void) {
   const generation = getActiveCacheGeneration();
   const ownerScope = getActiveCacheOwner()?.scope;
@@ -878,6 +969,18 @@ async function uploadPersistentMediaAsset(input: PersistentMediaUploadInput): Pr
   const preparedUri = record?.preparedUri ?? downscaled?.uri ?? sourceUri;
   const mimeType = record?.mimeType ?? downscaled?.mimeType ?? defaultMimeType(mediaKind, input.mimeType);
   const fileSizeBytes = await fileByteLengthFromUri(preparedUri);
+  // Refuse what the server is going to refuse, before an intent, an upload and
+  // a wait have been spent on it. Without this the ceiling was only discovered
+  // by comparing the issued intent, which reported it as "Media upload intent
+  // does not match the selected file" — true, and useless to the person who
+  // just recorded a clip that was slightly too long.
+  if (input.surface === "post" && fileSizeBytes > postMediaMaxUploadBytes(mediaKind)) {
+    throw new Error(
+      mediaKind === "video"
+        ? "This video is too large to post. Record or pick a shorter clip."
+        : "This photo is too large to post."
+    );
+  }
   recordMobileFlow("media.local_preparation", Date.now() - preparationStarted, "success", {
     fileSizeBytes,
     mediaKind,
@@ -1000,7 +1103,7 @@ async function uploadPersistentMediaAsset(input: PersistentMediaUploadInput): Pr
   // recovery record (and local preview) until Realtime/status reconciliation
   // observes the canonical derivative. Post/avatar publication retains the
   // stricter ready-before-attach contract.
-  if (input.surface === "memory") {
+  if (input.surface === "memory" || input.deferReadyWait) {
     input.onUploadProgress?.(0.94);
     return {
       assetId,

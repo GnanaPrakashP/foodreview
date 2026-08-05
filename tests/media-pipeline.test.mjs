@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fsPromises from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { readFileSync } from "node:fs";
+import fs, { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 import vm from "node:vm";
@@ -49,12 +49,24 @@ function loadMediaPipelineModule() {
     exports: mod.exports,
     require(id) {
       if (id === "node:crypto") return crypto;
+      // The worker streams source objects (createReadStream), so it requires
+      // both fs entry points. Omitting this one made every test that loads the
+      // module throw at load time instead of asserting anything.
+      if (id === "node:fs") return fs;
       if (id === "node:fs/promises") return fsPromises;
       if (id === "node:os") return os;
       if (id === "node:path") return path;
       if (id === "node:child_process") return childProcess;
       if (id === "sharp") return sharp;
       if (id === "@/lib/media-image-processing.cjs") return nodeRequire("../lib/media-image-processing.cjs");
+      // Moderation is a network call the worker only makes for room media, and
+      // identifier hashing is privacy plumbing. Neither is under test here.
+      if (id === "@/lib/server/memory-media") return {
+        moderateMemoryMediaBuffer: async () => ({ status: "approved" })
+      };
+      if (id === "@/lib/server/api-security") return {
+        hashSecurityIdentifier: (scope, value) => `${scope}:${String(value).slice(0, 8)}`
+      };
       if (id === "@/lib/server/media-delivery-contract") return loadDeliveryContractModule();
       if (id === "@/lib/observability/server") return {
         mediaWorkerLogger: { error: () => {}, info: () => {}, warn: () => {} }
@@ -168,6 +180,13 @@ test("image processing creates exact 4:5 post canonical, feed, and thumbnail der
           return { error: null };
         }
       };
+    },
+    // A post is moderated before its derivatives are written, and the worker
+    // records the outcome through this RPC. `true` is the applied-the-action
+    // answer; anything else sends the worker down its re-read branch.
+    async rpc(name) {
+      assert.equal(name, "apply_media_moderation_action");
+      return { data: true, error: null };
     }
   };
 

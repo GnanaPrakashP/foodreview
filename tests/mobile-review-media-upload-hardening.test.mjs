@@ -46,7 +46,12 @@ test("mobile post flow uploads through media assets sequentially", () => {
   const mediaPicker = source("mobile/src/services/mediaPicker.ts");
   const postCaptureSession = source("mobile/src/services/postCaptureSession.ts");
 
-  assert.match(posts, /uploadPostMediaAsset, type MediaCropRect/);
+  // Posting goes through the media-asset pipeline, never a direct storage
+  // write, and each item is queued before the batch waits for all of them.
+  assert.match(posts, /uploadPostMediaAsset,/);
+  assert.match(posts, /waitForReadyMediaAssets,/);
+  assert.match(posts, /type MediaCropRect/);
+  assert.match(posts, /deferReadyWait: true/);
   assert.match(posts, /cropRect\?: MediaCropRect \| null/);
   assert.match(posts, /const uploaded = await uploadPostMediaAsset/);
   assert.match(posts, /intendedVisibility: visibility/);
@@ -60,10 +65,20 @@ test("mobile post flow uploads through media assets sequentially", () => {
   assert.match(mediaPipeline, /\/api\/media\/finalize-upload/);
   assert.match(mediaPipeline, /\/api\/media\/status\?ids=/);
   assert.match(mediaPipeline, /function defaultCropRect/);
-  assert.match(mediaPipeline, /targetAspect: surface === "avatar" \? 1 : mediaKind === "image" \|\| mediaKind === "video" \? 4 \/ 5 : null/);
+  // A post binds 4:5 and an avatar binds 1:1; the room surface, added later,
+  // deliberately binds nothing and keeps the frame it was shot in.
+  assert.match(
+    mediaPipeline,
+    /targetAspect: surface === "memory"\s*\?\s*null\s*:\s*surface === "avatar"\s*\?\s*1\s*:\s*mediaKind === "image" \|\| mediaKind === "video"\s*\?\s*4 \/ 5\s*:\s*null/
+  );
   assert.match(mediaPipeline, /waitForReadyMedia/);
   assert.match(mediaPipeline, /intent\.accessClass !== expectedAccessClass/);
-  assert.match(mediaPipeline, /XMLHttpRequest/);
+  // The transfer must report progress and stay cancellable — it moved from a
+  // raw XHR to expo-file-system's upload task, which is what account teardown
+  // aborts through the active-task registry.
+  assert.match(mediaPipeline, /FileSystem\.createUploadTask\(/);
+  assert.match(mediaPipeline, /activeUploadTasks/);
+  assert.match(mediaPipeline, /task\.cancelAsync\(\)/);
   assert.match(share, /router\.push\("\/share\/camera"\)/);
   assert.match(share, /consumePendingPostCaptures\(\)/);
   assert.match(share, /<CropRegionImage[\s\S]+cropRect=\{media\.cropRect\}[\s\S]+uri=\{media\.uri\}/);

@@ -743,6 +743,14 @@ test("mobile foreground recovery resumes prepared and uploaded phases and preser
       if (id === "@/api/client") return { authorizedApiHeaders: async () => ({ Authorization: "Bearer test-token" }) };
       if (id === "@/api/config") return { apiBaseUrl: "http://local.test", apiUrl: (value) => value };
       if (id === "@/api/supabase") return { resolvedSupabaseAnonKey: "anon", resolvedSupabaseUrl: "http://supabase.test", supabase };
+      // Real ceilings, not a permissive stub: the pipeline refuses an oversized
+      // post before it creates an intent, and that guard has to behave here the
+      // way it behaves on a device.
+      if (id === "@/constants/postMediaPolicy") return {
+        postMediaMaxUploadBytes: (mediaKind) => (
+          mediaKind === "video" ? 20 * 1024 * 1024 : 10 * 1024 * 1024
+        )
+      };
       if (id === "@/services/accountFileStore") return { stageAccountFile: async (uri) => uri };
       if (id === "@/services/installIdentity") return { createRequestId: () => "test-request-id" };
       if (id === "@/services/mediaUploadRecovery") return recovery;
@@ -801,4 +809,158 @@ test("worker artifact, internal routes, and reconciliation tooling are productio
   assert.match(mobile, /processing_failed/);
   assert.match(mobile, /isCacheGenerationActive/);
   assert.match(mobile, /still processing/i);
+});
+
+function loadMobilePipelineForBatch(records, fetchImpl) {
+  const owner = { scope: "owner-scope", userId: "11111111-1111-4111-8111-111111111111" };
+  let current = records;
+  const recovery = {
+    createPendingMediaUpload: (record) => record,
+    findPendingMediaUpload: () => null,
+    pendingMediaUploads: () => current,
+    prunePendingMediaUploads: async () => current,
+    removePendingMediaUpload: async (id) => {
+      current = current.filter((record) => record.localUploadId !== id);
+    },
+    updatePendingMediaUpload: (id, patch) => {
+      current = current.map((record) => (
+        record.localUploadId === id ? { ...record, ...patch } : record
+      ));
+      return current.find((record) => record.localUploadId === id);
+    }
+  };
+  return loadTs("mobile/src/services/mediaPipeline.ts", (id) => {
+    if (id === "expo-image-manipulator") return { ImageManipulator: {}, SaveFormat: { JPEG: "jpeg" } };
+    if (id === "expo-file-system/legacy") return {
+      FileSystemSessionType: { BACKGROUND: "background" },
+      FileSystemUploadType: { BINARY_CONTENT: "binary" },
+      createUploadTask: () => ({ cancelAsync: async () => {}, uploadAsync: async () => null }),
+      deleteAsync: async () => {},
+      getInfoAsync: async () => ({ exists: true, isDirectory: false, size: 4 })
+    };
+    if (id === "react-native") return { Platform: { OS: "web" } };
+    if (id === "@/api/client") return { authorizedApiHeaders: async () => ({ Authorization: "Bearer test-token" }) };
+    if (id === "@/api/config") return { apiBaseUrl: "http://local.test", apiUrl: (value) => value };
+    if (id === "@/api/supabase") return {
+      resolvedSupabaseAnonKey: "anon",
+      resolvedSupabaseUrl: "http://supabase.test",
+      supabase: { auth: { getSession: async () => ({ data: { session: { access_token: "t" } }, error: null }) } }
+    };
+    if (id === "@/constants/postMediaPolicy") return {
+      postMediaMaxUploadBytes: () => 20 * 1024 * 1024
+    };
+    if (id === "@/services/accountFileStore") return { stageAccountFile: async (uri) => uri };
+    if (id === "@/services/installIdentity") return { createRequestId: () => "test-request-id" };
+    if (id === "@/services/mediaUploadRecovery") return recovery;
+    if (id === "@/observability/mobileTelemetry") return {
+      captureMobileError: () => {},
+      recordMobileFlow: () => {}
+    };
+    if (id === "@/security/cacheOwnership") return {
+      getActiveCacheGeneration: () => 9,
+      getActiveCacheOwner: () => owner,
+      isCacheGenerationActive: (generation) => generation === 9
+    };
+    if (id === "@/security/sensitiveResourceRegistry") return { registerSensitiveResourceCleanup: () => {} };
+    throw new Error(`Unexpected import: ${id}`);
+  }, { fetch: fetchImpl });
+}
+
+function batchRecord(index, overrides = {}) {
+  return {
+    accessClass: "private_post",
+    assetId: `asset-${index}`,
+    localUploadId: `recovery-${index}`,
+    mediaKind: "image",
+    mimeType: "image/jpeg",
+    sourceUri: `file:///private/owner-scope/item-${index}.jpg`,
+    state: "processing",
+    surface: "post",
+    ...overrides
+  };
+}
+
+function readyStatus(index) {
+  return {
+    assetId: `asset-${index}`,
+    derivatives: [{
+      file_size_bytes: 200 + index,
+      height: 1350,
+      kind: "canonical",
+      mime_type: "image/jpeg",
+      width: 1080
+    }],
+    failureCode: null,
+    failureReason: null,
+    job: { attempts: 1, maxAttempts: 5, nextAttemptAt: null, status: "succeeded" },
+    mediaType: "image",
+    status: "ready",
+    surface: "post"
+  };
+}
+
+test("a multi-item post asks about every asset in one status request", async () => {
+  const requests = [];
+  const pipeline = loadMobilePipelineForBatch(
+    [batchRecord(1), batchRecord(2), batchRecord(3)],
+    async (url) => {
+      requests.push(String(url));
+      return { json: async () => ({ assets: [readyStatus(1), readyStatus(2), readyStatus(3)] }), ok: true };
+    }
+  );
+
+  const ready = await pipeline.waitForReadyMediaAssets(["recovery-1", "recovery-2", "recovery-3"]);
+
+  // One cadence for the batch, not one per item — that serial backoff was the
+  // detection lag a four-photo post paid four times over.
+  assert.equal(requests.length, 1);
+  assert.match(requests[0], /asset-1/);
+  assert.match(requests[0], /asset-2/);
+  assert.match(requests[0], /asset-3/);
+  assert.equal(ready.size, 3);
+  // The pipeline runs in its own realm, so compare values, not intrinsics.
+  assert.deepEqual(JSON.parse(JSON.stringify(ready.get("recovery-2"))), {
+    fileSizeBytes: 202,
+    height: 1350,
+    mimeType: "image/jpeg",
+    width: 1080
+  });
+});
+
+test("an already processed item is not polled for again", async () => {
+  const requests = [];
+  const settled = batchRecord(1, {
+    readyResult: { fileSizeBytes: 111, height: 1350, mimeType: "image/jpeg", width: 1080 },
+    state: "ready"
+  });
+  const pipeline = loadMobilePipelineForBatch([settled, batchRecord(2)], async (url) => {
+    requests.push(String(url));
+    return { json: async () => ({ assets: [readyStatus(2)] }), ok: true };
+  });
+
+  const ready = await pipeline.waitForReadyMediaAssets(["recovery-1", "recovery-2"]);
+
+  assert.equal(requests.length, 1);
+  assert.doesNotMatch(requests[0], /asset-1/);
+  assert.equal(ready.get("recovery-1").fileSizeBytes, 111);
+  assert.equal(ready.get("recovery-2").fileSizeBytes, 202);
+});
+
+test("one unusable item fails the whole batch", async () => {
+  const pipeline = loadMobilePipelineForBatch([batchRecord(1), batchRecord(2)], async () => ({
+    json: async () => ({ assets: [readyStatus(1), {
+      ...readyStatus(2),
+      derivatives: [],
+      failureCode: "invalid_file_signature",
+      failureReason: "Selected media is invalid or corrupted.",
+      job: { attempts: 1, maxAttempts: 5, nextAttemptAt: null, status: "rejected" },
+      status: "rejected"
+    }] }),
+    ok: true
+  }));
+
+  await assert.rejects(
+    () => pipeline.waitForReadyMediaAssets(["recovery-1", "recovery-2"]),
+    /invalid or corrupted/
+  );
 });

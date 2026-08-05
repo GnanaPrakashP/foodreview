@@ -4,6 +4,10 @@ import { useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CameraScreen } from "@/components/memories/camera/CameraScreen";
 import { postBiteGuideFrame } from "@/constants/postCaptureLayout";
+import {
+  POST_VIDEO_CAPTURE_BITRATE,
+  POST_VIDEO_CAPTURE_QUALITY
+} from "@/constants/postMediaPolicy";
 import { requestPostComposerReset, setPendingPostCapture, setPendingPostCaptures } from "@/services/postCaptureSession";
 import { useComposerStore } from "@/stores/composerStore";
 
@@ -44,6 +48,9 @@ export default function ShareCameraRoute() {
     <CameraScreen
       autoCropPhotoToGuide
       gallerySelectionLimit={remainingSlots}
+      // A full 30 s take has to stay inside the 20 MB post ceiling.
+      videoBitrate={POST_VIDEO_CAPTURE_BITRATE}
+      videoQuality={POST_VIDEO_CAPTURE_QUALITY}
       onCapture={(asset) => {
         // Hand the capture to the share tab first, then pop a couple frames
         // later: dismissing while the tab underneath is still committing its
