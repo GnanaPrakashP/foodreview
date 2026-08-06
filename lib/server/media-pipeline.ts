@@ -511,8 +511,9 @@ export function safeMediaPipelineErrorMessage(error: unknown) {
     case "moderation_response_invalid":
     case "moderation_check_failed":
     case "moderation_check_timed_out":
-    case "video_too_large_for_inline_moderation":
     case "image_too_large_for_inline_moderation":
+    case "moderation_frames_unavailable":
+    case "media_video_moderation_frames_failed":
       return "Media is still awaiting safety review.";
     case "owner_cancelled":
     case "cancelled":
@@ -671,7 +672,7 @@ export async function processMediaAsset(
   }
   await lease?.checkpoint("after_source_validation");
   const moderationStarted = Date.now();
-  await ensureMediaAssetModeration(admin, asset, buffer, lease);
+  await ensureMediaAssetModeration(admin, asset, buffer, lease, config);
   if (lease) {
     recordMediaWorkerEvent("moderation_completed", {
       attempt: lease.job.attempts,
@@ -686,11 +687,70 @@ export async function processMediaAsset(
     : processVideoAsset(admin, asset, buffer, lease, config);
 }
 
+const MODERATION_FRAME_SAMPLES = 4;
+const MODERATION_FRAME_MAX_EDGE = 640;
+
+/**
+ * Pulls a handful of evenly spaced stills so a clip can be screened by an image
+ * classifier. Downscaled on the way out: the classifier reads content, not
+ * detail, and a smaller payload keeps each call inside the moderation budget.
+ *
+ * Returns an empty list on any ffmpeg failure, which leaves the verdict pending
+ * and retryable rather than letting an unscreened clip through.
+ */
+async function sampleVideoModerationFrames(
+  asset: MediaAssetRow,
+  buffer: Buffer,
+  config: MediaWorkerConfig
+): Promise<Buffer[]> {
+  await mkdir(config.tempRoot, { recursive: true, mode: 0o700 });
+  const dir = await mkdtemp(path.join(config.tempRoot, `moderation-${asset.id}-`));
+  try {
+    const inputPath = path.join(dir, "source");
+    await writeFile(inputPath, buffer, { mode: 0o600 });
+    const durationSeconds = Math.max(0.5, (asset.duration_ms ?? 0) / 1000);
+    // Evenly spaced across the clip rather than clustered at the start, where a
+    // title card or a dark first frame says nothing about the rest.
+    const fps = Math.min(MODERATION_FRAME_SAMPLES / durationSeconds, 8);
+    await runCommand("ffmpeg", [
+      "-y",
+      "-threads", String(config.ffmpegThreads),
+      "-i", inputPath,
+      "-vf", `fps=${fps.toFixed(4)},scale='min(${MODERATION_FRAME_MAX_EDGE},iw)':-2`,
+      "-frames:v", String(MODERATION_FRAME_SAMPLES),
+      "-q:v", "4",
+      path.join(dir, "frame_%02d.jpg")
+    ], config.ffmpegTimeoutMs, {
+      exit: "media_video_moderation_frames_failed",
+      timeout: "temporary_ffmpeg_resource_failure"
+    });
+
+    const frames: Buffer[] = [];
+    for (let index = 1; index <= MODERATION_FRAME_SAMPLES; index += 1) {
+      try {
+        frames.push(await readFile(path.join(dir, `frame_${String(index).padStart(2, "0")}.jpg`)));
+      } catch {
+        break;
+      }
+    }
+    return frames;
+  } catch (error) {
+    mediaWorkerLogger.warn("moderation_frame_sampling_failed", {
+      assetHash: hashSecurityIdentifier("media-asset", asset.id),
+      reason: error instanceof Error ? error.message : "unknown"
+    });
+    return [];
+  } finally {
+    await rm(dir, { force: true, recursive: true }).catch(() => undefined);
+  }
+}
+
 async function ensureMediaAssetModeration(
   admin: AdminClient,
   asset: MediaAssetRow,
   buffer: Buffer,
-  lease?: ProcessingLease
+  lease: ProcessingLease | undefined,
+  config: MediaWorkerConfig
 ) {
   if (asset.moderation_status === "approved") return;
   if (asset.moderation_status === "rejected") throw new Error("moderation_rejected");
@@ -706,6 +766,12 @@ async function ensureMediaAssetModeration(
     ? { status: "approved" }
     : await moderateMemoryMediaBuffer({
       buffer,
+      // A clip is screened as stills. ffmpeg lives here, not in the moderation
+      // module, and the frames are pulled before any derivative is written so
+      // nothing is produced from media that has not been cleared.
+      frames: asset.media_type === "video"
+        ? await sampleVideoModerationFrames(asset, buffer, config)
+        : undefined,
       kind: asset.media_type
     });
   await lease?.checkpoint("after_moderation");

@@ -51,17 +51,7 @@ export function mediaModerationProviderConfigured(env: NodeJS.ProcessEnv = proce
 }
 
 type SafeSearchLikelihood = "UNKNOWN" | "VERY_UNLIKELY" | "UNLIKELY" | "POSSIBLE" | "LIKELY" | "VERY_LIKELY";
-type VideoLikelihood =
-  | "LIKELIHOOD_UNSPECIFIED"
-  | "VERY_UNLIKELY"
-  | "UNLIKELY"
-  | "POSSIBLE"
-  | "LIKELY"
-  | "VERY_LIKELY";
-
 const UNSAFE_IMAGE_LIKELIHOODS: Set<SafeSearchLikelihood> = new Set(["LIKELY", "VERY_LIKELY"]);
-const UNSAFE_VIDEO_LIKELIHOODS: Set<VideoLikelihood> = new Set(["LIKELY", "VERY_LIKELY"]);
-const MAX_INLINE_VIDEO_MODERATION_BYTES = 20 * 1024 * 1024;
 const MODERATION_REQUEST_TIMEOUT_MS = 20_000;
 // Cloud Vision's ceiling for inline base64 image content in images:annotate.
 // Compared against the RAW buffer, so the threshold already accounts for the
@@ -310,9 +300,14 @@ export function validateDetectedMemoryMedia({
 
 export async function moderateMemoryMediaBuffer({
   buffer,
+  frames,
   kind
 }: {
   buffer: Buffer;
+  // Stills sampled from the clip by the caller, which owns ffmpeg. Video is
+  // screened frame by frame because Video Intelligence cannot authenticate
+  // with an API key; see moderateVideoFrames.
+  frames?: Buffer[];
   kind: MemoryMediaKind;
 }): Promise<MemoryMediaModerationResult> {
   const apiKey = moderationApiKey();
@@ -324,10 +319,7 @@ export async function moderateMemoryMediaBuffer({
   }
 
   if (kind === "image") return moderateImageBuffer(buffer, apiKey);
-  if (buffer.byteLength > MAX_INLINE_VIDEO_MODERATION_BYTES) {
-    return { reason: "video_too_large_for_inline_moderation", status: "pending" };
-  }
-  return moderateVideoBuffer(buffer, apiKey);
+  return moderateVideoFrames(frames ?? [], apiKey);
 }
 
 export function intentExpiresAt(now = new Date()) {
@@ -446,69 +438,26 @@ async function moderateImageBuffer(buffer: Buffer, apiKey: string): Promise<Memo
   return { status: "approved" };
 }
 
-async function moderateVideoBuffer(buffer: Buffer, apiKey: string): Promise<MemoryMediaModerationResult> {
-  let annotateResponse: Response;
-  try {
-    annotateResponse = await moderationFetch(`https://videointelligence.googleapis.com/v1/videos:annotate?key=${apiKey}`, {
-      body: JSON.stringify({
-        features: ["EXPLICIT_CONTENT_DETECTION"],
-        inputContent: buffer.toString("base64")
-      }),
-      headers: { "Content-Type": "application/json" },
-      method: "POST"
-    });
-  } catch {
-    return { reason: "moderation_service_unavailable", status: "pending" };
+export async function moderateVideoFrames(
+  frames: Buffer[],
+  apiKey: string
+): Promise<MemoryMediaModerationResult> {
+  // Sampled stills, screened by Cloud Vision.
+  //
+  // Video Intelligence was the obvious provider and it cannot be used here:
+  // videos:annotate refuses API-key authentication outright with 401
+  // UNAUTHENTICATED, so every post video failed as
+  // `moderation_service_unavailable` and burned five worker attempts on a call
+  // that could never succeed. An empty-payload probe answers 400 and looks
+  // healthy, which is why this hid for so long. Vision does accept the key, it
+  // is already enabled, and SafeSearch screens adult, racy AND violence —
+  // where explicit-content detection only looked for pornography.
+  if (frames.length === 0) return { reason: "moderation_frames_unavailable", status: "pending" };
+  for (const frame of frames) {
+    const result = await moderateImageBuffer(frame, apiKey);
+    // One unsafe frame condemns the clip; one unreadable answer leaves the
+    // whole verdict pending rather than passing on partial evidence.
+    if (result.status !== "approved") return result;
   }
-
-  if (!annotateResponse.ok) return { reason: "moderation_service_unavailable", status: "pending" };
-  let name: string | undefined;
-  try {
-    ({ name } = await annotateResponse.json() as { name?: string });
-  } catch {
-    return { reason: "moderation_response_invalid", status: "pending" };
-  }
-  if (!name) return { reason: "moderation_service_unavailable", status: "pending" };
-
-  const deadline = Date.now() + 55_000;
-  let delayMs = 3000;
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-    delayMs = Math.min(delayMs + 2000, 10_000);
-
-    let pollResponse: Response;
-    try {
-      pollResponse = await moderationFetch(`https://videointelligence.googleapis.com/v1/${name}?key=${apiKey}`);
-    } catch {
-      return { reason: "moderation_service_unavailable", status: "pending" };
-    }
-
-    if (!pollResponse.ok) return { reason: "moderation_service_unavailable", status: "pending" };
-    let operation: {
-      done?: boolean;
-      error?: unknown;
-      response?: {
-        annotationResults?: Array<{
-          explicitAnnotation?: {
-            frames?: Array<{ pornographyLikelihood?: VideoLikelihood }>;
-          };
-        }>;
-      };
-    };
-    try {
-      operation = await pollResponse.json();
-    } catch {
-      return { reason: "moderation_response_invalid", status: "pending" };
-    }
-    if (!operation.done) continue;
-    if (operation.error) return { reason: "moderation_check_failed", status: "pending" };
-
-    const frames = operation.response?.annotationResults?.[0]?.explicitAnnotation?.frames ?? [];
-    if (frames.some((frame) => UNSAFE_VIDEO_LIKELIHOODS.has(frame.pornographyLikelihood ?? "LIKELIHOOD_UNSPECIFIED"))) {
-      return { reason: "explicit_content", status: "rejected" };
-    }
-    return { status: "approved" };
-  }
-
-  return { reason: "moderation_check_timed_out", status: "pending" };
+  return { status: "approved" };
 }

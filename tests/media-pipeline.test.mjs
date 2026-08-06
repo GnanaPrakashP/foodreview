@@ -229,3 +229,30 @@ test("image processing creates exact 4:5 post canonical, feed, and thumbnail der
   assert.equal(uploads.length, 3);
   assert.deepEqual(uploads.map((upload) => upload.options.cacheControl), ["300", "300", "300"]);
 });
+
+test("video is screened as sampled frames, because the video API refuses an API key", () => {
+  const moderation = source("lib/server/memory-media.ts");
+  const worker = source("lib/server/media-pipeline.ts");
+
+  // videos:annotate answers 401 UNAUTHENTICATED to an API key, so every post
+  // video failed as moderation_service_unavailable and burned five worker
+  // attempts on a call that could never succeed. Vision accepts the key.
+  assert.doesNotMatch(moderation, /videointelligence\.googleapis\.com/);
+  assert.doesNotMatch(moderation, /EXPLICIT_CONTENT_DETECTION/);
+  assert.match(moderation, /export async function moderateVideoFrames/);
+  assert.match(moderation, /return moderateVideoFrames\(frames \?\? \[\], apiKey\)/);
+  // One unsafe frame condemns the clip; an unreadable answer leaves it pending.
+  assert.match(moderation, /if \(result\.status !== "approved"\) return result;/);
+  assert.match(moderation, /if \(frames\.length === 0\) return \{ reason: "moderation_frames_unavailable", status: "pending" \}/);
+
+  // The frames are pulled before any derivative exists, so nothing is produced
+  // from media that has not been cleared.
+  const moderationIndex = worker.indexOf("await ensureMediaAssetModeration(");
+  const processIndex = worker.indexOf("? processImageAsset(admin, asset, buffer, lease, config)");
+  assert.ok(moderationIndex > 0 && processIndex > moderationIndex);
+  assert.match(worker, /async function sampleVideoModerationFrames/);
+  assert.match(worker, /"-frames:v", String\(MODERATION_FRAME_SAMPLES\)/);
+  // A sampling failure returns nothing, which keeps the verdict pending rather
+  // than letting an unscreened clip through.
+  assert.match(worker, /catch \(error\) \{[\s\S]*?moderation_frame_sampling_failed[\s\S]*?return \[\];/);
+});
