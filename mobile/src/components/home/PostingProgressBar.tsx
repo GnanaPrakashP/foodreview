@@ -1,7 +1,9 @@
 import { useEffect, useRef } from "react";
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from "react-native";
+import { X } from "lucide-react-native";
 import { useThemePreference } from "@/hooks/useThemePreference";
 import { useReducedMotionPreference } from "@/hooks/useReducedMotionPreference";
+import { deletePendingPost } from "@/services/postingQueueStore";
 import { fontStyles, spacing } from "@/theme";
 import {
   postingJobsInFlight,
@@ -29,6 +31,12 @@ export function PostingProgressBar() {
   const jobs = usePostingStore((state) => state.jobs);
   const requeue = usePostingStore((state) => state.requeue);
   const remove = usePostingStore((state) => state.remove);
+  // Dropping it from the list is not enough: the persisted snapshot is what
+  // brings a failed post back as unfinished on the next launch.
+  const dismiss = (id: string) => {
+    deletePendingPost(id);
+    remove(id);
+  };
   const width = useRef(new Animated.Value(0)).current;
 
   const active = postingJobsInFlight(jobs);
@@ -82,15 +90,15 @@ export function PostingProgressBar() {
         </View>
       ) : null}
       {first ? (
+        <View style={[styles.failure, { backgroundColor: colors.dangerSoft }]}>
         <Pressable
           accessibilityHint={permanent ? "Removes this post" : "Tries this post again"}
           accessibilityLabel={[failedPlace, first.error ?? "Could not share this post"]
             .filter(Boolean)
             .join(": ")}
           accessibilityRole="button"
-          onPress={() => (permanent ? remove(first.id) : requeue(first.id))}
-          onLongPress={() => remove(first.id)}
-          style={[styles.failure, { backgroundColor: colors.dangerSoft }]}
+          onPress={() => (permanent ? dismiss(first.id) : requeue(first.id))}
+          style={styles.failureBody}
         >
           <Text numberOfLines={2} style={[styles.failureText, { color: colors.white }]}>
             {/* Which post, then why. With several queued the reason alone does
@@ -109,6 +117,20 @@ export function PostingProgressBar() {
             </Text>
           ) : null}
         </Pressable>
+        {/* Retrying is a choice, not the only exit. Without this the only way
+            past a failure you did not want to retry was a long press nobody
+            was told about, and the post came back on every launch. */}
+        <Pressable
+          accessibilityHint="Removes this post without sharing it"
+          accessibilityLabel="Dismiss"
+          accessibilityRole="button"
+          hitSlop={12}
+          onPress={() => dismiss(first.id)}
+          style={styles.failureDismiss}
+        >
+          <X color={colors.white} size={16} strokeWidth={2.4} />
+        </Pressable>
+        </View>
       ) : null}
     </View>
   );
@@ -133,6 +155,18 @@ const styles = StyleSheet.create({
     minHeight: FAILURE_HEIGHT,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.s
+  },
+  failureBody: {
+    flexShrink: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.s
+  },
+  failureDismiss: {
+    alignItems: "center",
+    height: 28,
+    justifyContent: "center",
+    width: 28
   },
   failureText: {
     ...fontStyles.semiBold,

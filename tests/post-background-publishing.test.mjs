@@ -227,11 +227,25 @@ test("a permanent rejection is reported as its reason and never offered as a ret
   // action follows the verdict.
   assert.match(bar, /\{first\.error \?\? "Could not share this post\."\}/);
   assert.match(bar, /permanent \? "Tap to dismiss" : "Tap to retry"/);
-  assert.match(bar, /permanent \? remove\(first\.id\) : requeue\(first\.id\)/);
+  assert.match(bar, /permanent \? dismiss\(first\.id\) : requeue\(first\.id\)/);
   // With several posts queued the reason alone does not say which one stopped.
   assert.match(bar, /const failedPlace = first\?\.input\.restaurantName\?\.trim\(\) \?\? ""/);
   assert.match(bar, /failedPlace \? <Text style=\{styles\.failurePlace\}>/);
   assert.match(runner, /mediaProcessingIssueKind\(error\) === "permanent"/);
   // A failure stays visible while another post is still uploading.
   assert.match(bar, /active\.length > 0 \? \(/);
+});
+
+test("a failure can always be dismissed, and dismissing it is permanent", () => {
+  const bar = source("mobile/src/components/home/PostingProgressBar.tsx");
+
+  // Retrying is a choice, not the only exit: a retryable failure needs a way
+  // out that is not a long press nobody was told about.
+  assert.match(bar, /accessibilityLabel="Dismiss"/);
+  assert.match(bar, /onPress=\{\(\) => dismiss\(first\.id\)\}/);
+  assert.doesNotMatch(bar, /onLongPress/);
+  // Dropping it from the list alone would bring the post back as unfinished on
+  // the next launch, because the runner restores from the persisted snapshot.
+  assert.match(bar, /const dismiss = \(id: string\) => \{\s*\n\s*deletePendingPost\(id\);\s*\n\s*remove\(id\);/);
+  assert.match(source("mobile/src/providers/PostingQueueRunner.tsx"), /readPendingPosts\(\)/);
 });
