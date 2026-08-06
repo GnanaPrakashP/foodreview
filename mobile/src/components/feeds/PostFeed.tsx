@@ -1547,7 +1547,15 @@ export const PostFeed = forwardRef<PostFeedHandle, PostFeedProps>(function PostF
       if (collapsibleTabView) {
         return (
           <CollapsibleTabs.FlashList
-            contentContainerStyle={[styles.virtualizedContent, contentContainerStyle]}
+            // Flattened, not an array. This wrapper merges with an object
+            // spread — `{ paddingTop, ..._contentContainerStyle }` — so an
+            // array arrives as numeric keys and every style in it is dropped,
+            // including the background colour. That left the header inset above
+            // the first post unpainted, which is the black band on the profile
+            // Posts tab; the Memories tab passes a plain object and is fine.
+            // The library's FlatList wrapper merges as an array, so only this
+            // path needs it.
+            contentContainerStyle={StyleSheet.flatten([styles.virtualizedContent, contentContainerStyle])}
             data={state ? [] : diagnosticInitialPagePosts}
             drawDistance={DIAGNOSTIC_RECYCLING_DRAW_DISTANCE_PX}
             getItemType={postCardRecyclingType}
