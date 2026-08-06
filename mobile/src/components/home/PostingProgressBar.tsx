@@ -61,6 +61,7 @@ export function PostingProgressBar() {
   // A permanent outcome is the post's answer, not a hiccup: offer to clear it
   // rather than to try the same thing again.
   const permanent = first?.failureKind === "permanent";
+  const failedPlace = first?.input.restaurantName?.trim() ?? "";
 
   return (
     <View>
@@ -83,13 +84,18 @@ export function PostingProgressBar() {
       {first ? (
         <Pressable
           accessibilityHint={permanent ? "Removes this post" : "Tries this post again"}
-          accessibilityLabel={first.error ?? "Could not share this post"}
+          accessibilityLabel={[failedPlace, first.error ?? "Could not share this post"]
+            .filter(Boolean)
+            .join(": ")}
           accessibilityRole="button"
           onPress={() => (permanent ? remove(first.id) : requeue(first.id))}
           onLongPress={() => remove(first.id)}
           style={[styles.failure, { backgroundColor: colors.dangerSoft }]}
         >
           <Text numberOfLines={2} style={[styles.failureText, { color: colors.white }]}>
+            {/* Which post, then why. With several queued the reason alone does
+                not identify the one that stopped. */}
+            {failedPlace ? <Text style={styles.failurePlace}>{`${failedPlace} · `}</Text> : null}
             {/* The reason, verbatim from the server. "Media did not pass the
                 safety review" and "we lost the connection" call for different
                 things from the person reading it. */}
@@ -136,6 +142,9 @@ const styles = StyleSheet.create({
   failureAction: {
     ...fontStyles.bold,
     textDecorationLine: "underline"
+  },
+  failurePlace: {
+    ...fontStyles.bold
   },
   failureCount: {
     ...fontStyles.semiBold,

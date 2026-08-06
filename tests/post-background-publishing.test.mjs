@@ -228,6 +228,9 @@ test("a permanent rejection is reported as its reason and never offered as a ret
   assert.match(bar, /\{first\.error \?\? "Could not share this post\."\}/);
   assert.match(bar, /permanent \? "Tap to dismiss" : "Tap to retry"/);
   assert.match(bar, /permanent \? remove\(first\.id\) : requeue\(first\.id\)/);
+  // With several posts queued the reason alone does not say which one stopped.
+  assert.match(bar, /const failedPlace = first\?\.input\.restaurantName\?\.trim\(\) \?\? ""/);
+  assert.match(bar, /failedPlace \? <Text style=\{styles\.failurePlace\}>/);
   assert.match(runner, /mediaProcessingIssueKind\(error\) === "permanent"/);
   // A failure stays visible while another post is still uploading.
   assert.match(bar, /active\.length > 0 \? \(/);
