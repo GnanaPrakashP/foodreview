@@ -47,6 +47,8 @@ import { useComposerStore } from "@/stores/composerStore";
 import { useUserLocationStore } from "@/stores/userLocationStore";
 import { createLocalMMKV } from "@/security/localMMKV";
 import { clearPostDraftForScope } from "@/services/postDraftStore";
+import { clearPostingQueueForScope } from "@/services/postingQueueStore";
+import { usePostingStore } from "@/stores/postingStore";
 import { clearMediaUploadRecoveryForScope } from "@/services/mediaUploadRecovery";
 import { captureMobileError, clearMobileTelemetryIdentity, recordMobileFlow } from "@/observability/mobileTelemetry";
 
@@ -251,6 +253,10 @@ async function runCleanupJournal(journal: CleanupJournal, queryClient?: QueryCli
     await cleanupStep(next, "clearing_draft_storage", async () => {
       clearMediaUploadRecoveryForScope(next.ownerScope);
       clearPostDraftForScope(next.ownerScope);
+      // A post handed to the background queue is unsent content belonging to
+      // the account that wrote it, and must leave with them.
+      clearPostingQueueForScope(next.ownerScope);
+      usePostingStore.getState().reset();
     });
     if (reasonInvalidatesSession(next.reason)) {
       await cleanupStep(next, "clearing_auth_storage", clearSupabaseLocalSessionStorage);

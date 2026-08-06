@@ -10,9 +10,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SignedOutFeedState } from "@/components/feeds/PostFeed";
 import { CropRectEditor } from "@/components/posts/CropRectEditor";
 import { CropRegionImage } from "@/components/posts/CropRegionImage";
-import { ErrorState, LoadingState } from "@/components/ui/AppState";
+import { LoadingState } from "@/components/ui/AppState";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
-import { useCreatePostMutation } from "@/hooks/useCreatePost";
 import { useCreateMemoryRoomMutation } from "@/hooks/useMemories";
 import { useUserProfileSearch } from "@/hooks/useUserProfileSearch";
 import { getOccasionTheme } from "@/features/occasions/occasionThemes";
@@ -44,7 +43,11 @@ import { useComposerStore } from "@/stores/composerStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { fontStyles, radius, screenLayout, spacing, typography } from "@/theme";
 import type { FoodItem, Visibility } from "@/types/models";
+import { captureMobileError } from "@/observability/mobileTelemetry";
+import { createUuid } from "@/services/installIdentity";
 import { clearActivePostDraft, loadActivePostDraft, saveActivePostDraft } from "@/services/postDraftStore";
+import { savePendingPost } from "@/services/postingQueueStore";
+import { usePostingStore } from "@/stores/postingStore";
 
 type ThemeColors = ReturnType<typeof themeColorsFor>;
 
@@ -148,7 +151,6 @@ export default function ShareScreen() {
   const isReady = useSessionStore((state) => state.isReady);
   const isAuthenticated = useSessionStore((state) => state.isAuthenticated);
   const actor = useSessionStore((state) => state.profile);
-  const createPost = useCreatePostMutation();
   const createMemoryRoom = useCreateMemoryRoomMutation();
   const [shareMode, setShareMode] = useState<ShareMode>(initialShareMode);
   const [soloStep, setSoloStep] = useState<SoloStep>("review");
@@ -174,7 +176,6 @@ export default function ShareScreen() {
     }
   }
   const [imageError, setImageError] = useState("");
-  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const mediaItemsRef = useRef(mediaItems);
   mediaItemsRef.current = mediaItems;
   const { width: windowWidth } = useWindowDimensions();
@@ -217,17 +218,15 @@ export default function ShareScreen() {
   const canAddMoreMedia = mediaItems.length < MAX_POST_MEDIA;
   const canSubmit = Boolean(mediaItems.length > 0 && hasSoloDetails);
   const soloHeaderActionLabel = soloStep === "preview" ? "Post" : "Next";
-  const uploadPercent = uploadProgress === null ? null : Math.max(0, Math.min(100, Math.round(uploadProgress * 100)));
-  const postSubmitLabel = createPost.isPending
-    ? uploadPercent === null
-      ? "Posting..."
-      : `Posting ${uploadPercent}%`
-    : soloHeaderActionLabel;
+  // Sharing hands the post to the background queue and returns an empty
+  // composer, so there is no in-flight state to show here and nothing to
+  // disable: the next post can be started immediately.
+  const postSubmitLabel = soloHeaderActionLabel;
   const soloHeaderActionDisabled = soloStep === "review"
     ? mediaItems.length === 0
     : soloStep === "details"
       ? !hasSoloDetails
-      : !canSubmit || createPost.isPending;
+      : !canSubmit;
   const canCreateMemory = Boolean(memoryParticipantNames.length > 0);
   const previewAuthorName = actor?.displayName || actor?.username || "You";
   const previewInitials = previewAuthorName
@@ -304,7 +303,6 @@ export default function ShareScreen() {
     setSoloStep("review");
     setMediaItems([]);
     setImageError("");
-    setUploadProgress(null);
     finishFlow();
     if (returnOrigin === "profile-posts") {
       router.replace({ pathname: "/profile", params: { tab: "posts" } });
@@ -317,7 +315,6 @@ export default function ShareScreen() {
     setSoloStep("review");
     setImageError("");
     setSuccess("");
-    setUploadProgress(null);
     router.push("/share/camera");
   }, [router]);
 
@@ -396,7 +393,6 @@ export default function ShareScreen() {
   }, []);
 
   const receiveCapturedPostMedia = useCallback((capturedItems: MemoryCapturedMediaInput[]) => {
-    setUploadProgress(null);
     // The API rejects longer clips; gallery picks can exceed the camera's cap.
     const isTooLong = (item: MemoryCapturedMediaInput) =>
       item.mediaType === "video" && (item.duration ?? 0) > MAX_POST_VIDEO_MS + 500;
@@ -575,67 +571,74 @@ export default function ShareScreen() {
 
   async function submit() {
     setSuccess("");
-    setUploadProgress(null);
     if (mediaItems.length === 0) {
       setImageError("Add a photo or video.");
       return;
     }
 
-    try {
-      setUploadProgress(0);
-      const normalizedDishes = dishes
-        .map((dish) => ({ name: dish.name.trim(), rating: dish.rating }))
-        .filter((dish) => dish.name);
+    const normalizedDishes = dishes
+      .map((dish) => ({ name: dish.name.trim(), rating: dish.rating }))
+      .filter((dish) => dish.name);
+    const postId = createUuid();
+    const input = {
+      caption,
+      dishes: normalizedDishes,
+      dishName: firstDish?.name ?? "",
+      mediaItems: mediaItems.map((media) => ({
+        cropRect: media.cropRect,
+        durationMs: media.duration,
+        fileSize: media.fileSize,
+        height: media.height,
+        mediaType: media.mediaType,
+        mimeType: media.mimeType,
+        muted: media.muted,
+        uri: media.uri,
+        width: media.width
+      })),
+      rating: firstDish?.rating || 0,
+      recommended: true,
+      restaurantAddress: restaurantPlace?.formattedAddress,
+      restaurantArea: restaurantPlace?.shortFormattedAddress,
+      restaurantId: restaurantPlace?.placeId,
+      restaurantLat: restaurantPlace?.latitude,
+      restaurantLng: restaurantPlace?.longitude,
+      restaurantName: restaurantPlace?.name ?? restaurantName,
+      restaurantPrimaryType: restaurantPlace?.primaryType,
+      restaurantTypes: restaurantPlace?.types,
+      tags: selectedTags,
+      visibility
+    };
 
-      await createPost.mutateAsync({
-        caption,
-        dishes: normalizedDishes,
-        dishName: firstDish?.name ?? "",
-        mediaItems: mediaItems.map((media) => ({
-          cropRect: media.cropRect,
-          durationMs: media.duration,
-          fileSize: media.fileSize,
-          height: media.height,
-          mediaType: media.mediaType,
-          mimeType: media.mimeType,
-          muted: media.muted,
-          uri: media.uri,
-          width: media.width
-        })),
-        onUploadProgress: setUploadProgress,
-        rating: firstDish?.rating || 0,
-        recommended: true,
-        restaurantAddress: restaurantPlace?.formattedAddress,
-        restaurantArea: restaurantPlace?.shortFormattedAddress,
-        restaurantId: restaurantPlace?.placeId,
-        restaurantLat: restaurantPlace?.latitude,
-        restaurantLng: restaurantPlace?.longitude,
-        restaurantName: restaurantPlace?.name ?? restaurantName,
-        restaurantPrimaryType: restaurantPlace?.primaryType,
-        restaurantTypes: restaurantPlace?.types,
-        tags: selectedTags,
-        visibility
-      });
-      try { clearActivePostDraft(); } catch {}
-      setMediaItems([]);
-      setRestaurantName("");
-      setRestaurantPlace(null);
-      setDishes([emptyDish()]);
-      setCaption("");
-      setCustomTag("");
-      setSelectedTags([]);
-      setVisibility("public");
-      finishFlow();
-      // Posting ends the flow: back to the Create screen (tab bar returns),
-      // where the success banner is shown.
-      setShareMode("choice");
-      setSoloStep("review");
-      setSuccess("Post shared. Your feeds and profile are refreshing.");
-      setUploadProgress(null);
-    } catch {
-      setUploadProgress(null);
-      // Mutation error is rendered below.
+    // Persist before enqueueing: clearing the composer below leaves this
+    // snapshot as the only copy of the post until the server has it.
+    try {
+      savePendingPost(postId, input);
+    } catch (error) {
+      captureMobileError("post.queue_persist_failed", error);
     }
+    usePostingStore.getState().enqueue({
+      id: postId,
+      input,
+      mediaCount: input.mediaItems.length
+    });
+
+    // The composer is done the moment the post is handed off — it comes back
+    // empty and ready for the next one, and never shows the post in flight.
+    try { clearActivePostDraft(); } catch {}
+    setMediaItems([]);
+    setRestaurantName("");
+    setRestaurantPlace(null);
+    setDishes([emptyDish()]);
+    setCaption("");
+    setCustomTag("");
+    setSelectedTags([]);
+    setVisibility("public");
+    setSuccess("");
+    finishFlow();
+    setShareMode("choice");
+    setSoloStep("review");
+    // Home carries the progress line from here.
+    router.replace("/");
   }
 
   async function submitMemoryRoom() {
@@ -1126,9 +1129,9 @@ export default function ShareScreen() {
                     </View>
                   )}
 
-                  {createPost.isError ? (
-                    <ErrorState message={createPost.error.message} title="Could not share post" />
-                  ) : null}
+                  {/* A failed post is reported on Home, where the person went
+                      after sharing — not here, where they may already be
+                      composing the next one. */}
                   {success ? (
                     <View style={styles.successBanner}>
                       <Text style={styles.successTitle}>Shared</Text>

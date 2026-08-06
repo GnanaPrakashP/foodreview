@@ -22,6 +22,7 @@ import { HomeNotificationButton } from "@/components/home/HomeNotificationButton
 import { HomeFeedSkeleton } from "@/components/home/HomeFeedSkeleton";
 import { NewPostsControl } from "@/components/home/NewPostsControl";
 import { HomeUpToDateNotice } from "@/components/home/HomeUpToDateNotice";
+import { PostingProgressBar } from "@/components/home/PostingProgressBar";
 import { resolveHomeFeedPresentation } from "@/components/home/homeFeedPresentation";
 import { AppScreen as Screen } from "@/components/ui/AppScreen";
 import { mergeUniqueFeedPosts, useCircleFeedInfiniteQuery } from "@/hooks/useFeeds";
@@ -657,6 +658,9 @@ function ProductionCircleScreen() {
         </View>
         <HomeNotificationButton />
       </View>
+      {/* Sharing hands the post off and lands here, so this line is the only
+          place it is visible until it reaches the feed. */}
+      <PostingProgressBar />
     </View>
   );
 

@@ -964,3 +964,20 @@ test("one unusable item fails the whole batch", async () => {
     /invalid or corrupted/
   );
 });
+
+test("a batch waits for as long as its parts, not for one item's budget", async () => {
+  const pipeline = loadMobilePipelineForBatch(
+    [batchRecord(1), batchRecord(2), batchRecord(3), batchRecord(4)],
+    async () => ({ json: async () => ({ assets: [readyStatus(1)] }), ok: true })
+  );
+  const source = readFileSync(new URL("../mobile/src/services/mediaPipeline.ts", import.meta.url), "utf8");
+
+  // The worker processes one asset at a time, so four items legitimately take
+  // four times as long; sharing one item's budget would abandon a post the
+  // server was still finishing.
+  assert.match(source, /MEDIA_STATUS_MAX_POLLS \* pending\.size, MEDIA_STATUS_MAX_BATCH_POLLS/);
+  assert.match(source, /MEDIA_STATUS_MAX_BATCH_POLLS = 64/);
+  // Progress follows how much of the batch is done, not the poll count.
+  assert.match(source, /0\.92 \+ 0\.07 \* \(ready\.size \/ recoveryIds\.length\)/);
+  assert.ok(pipeline.waitForReadyMediaAssets);
+});

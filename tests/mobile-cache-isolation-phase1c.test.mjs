@@ -198,6 +198,10 @@ test("crash-interrupted cleanup remains fail-closed and completes before Bob act
     if (id === "@/services/memoryCaptureSession") return { clearMemoryCaptureSession: () => calls.push("memory.capture.clear") };
     if (id === "@/services/postCaptureSession") return { clearPostCaptureSession: () => calls.push("post.capture.clear") };
     if (id === "@/services/postDraftStore") return { clearPostDraftForScope: (scope) => calls.push(`post.draft.clear:${scope}`) };
+    // A post handed to the background queue is unsent content: it leaves with
+    // the account that wrote it, both on disk and in memory.
+    if (id === "@/services/postingQueueStore") return { clearPostingQueueForScope: (scope) => calls.push(`post.queue.clear:${scope}`) };
+    if (id === "@/stores/postingStore") return { usePostingStore: { getState: () => ({ reset: () => calls.push("post.queue.reset") }) } };
     if (["@/stores/commentsSheetStore", "@/stores/composerStore", "@/stores/userLocationStore"].includes(id)) {
       const exportName = id.includes("comments") ? "useCommentsSheetStore" : id.includes("composer") ? "useComposerStore" : "useUserLocationStore";
       return { [exportName]: stateStore };

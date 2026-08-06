@@ -150,6 +150,9 @@ export type UploadMemoryMediaAssetInput = {
 const MEDIA_STATUS_INITIAL_POLL_MS = 1500;
 const MEDIA_STATUS_MAX_POLL_MS = 8000;
 const MEDIA_STATUS_MAX_POLLS = 16;
+// Four items at the single-asset budget, which is about seven minutes at the
+// capped 8s interval. Past that the queue is stuck, not slow.
+const MEDIA_STATUS_MAX_BATCH_POLLS = 64;
 // The server emits bounded post/memory derivatives, so very large camera
 // originals only add upload bandwidth and transient memory pressure.
 const UPLOAD_IMAGE_MAX_EDGE = 2400;
@@ -561,8 +564,13 @@ export async function waitForReadyMediaAssets(
   const ownerScope = getActiveCacheOwner()?.scope;
   const controller = new AbortController();
   activePollControllers.add(controller);
+  // The worker processes one asset at a time, so a batch legitimately takes as
+  // long as the sum of its parts. Waiting on four videos inside one asset's
+  // budget would abandon a post the server was still finishing — the budget
+  // scales with the batch, bounded so a stuck queue still gives up.
+  const maxPolls = Math.min(MEDIA_STATUS_MAX_POLLS * pending.size, MEDIA_STATUS_MAX_BATCH_POLLS);
   try {
-    for (let attempt = 0; attempt < MEDIA_STATUS_MAX_POLLS; attempt += 1) {
+    for (let attempt = 0; attempt < maxPolls; attempt += 1) {
       if (!ownerScope || getActiveCacheOwner()?.scope !== ownerScope || !isCacheGenerationActive(generation)) {
         throw new Error("Media upload account changed.");
       }
@@ -590,7 +598,9 @@ export async function waitForReadyMediaAssets(
         onProgress?.(1);
         return ready;
       }
-      onProgress?.(0.92 + Math.min(0.07, attempt / MEDIA_STATUS_MAX_POLLS * 0.07));
+      // Reported against how much of the batch is done, not the poll count: a
+      // four-item post should not look finished after its first item lands.
+      onProgress?.(0.92 + 0.07 * (ready.size / recoveryIds.length));
       const delay = Math.min(MEDIA_STATUS_MAX_POLL_MS, MEDIA_STATUS_INITIAL_POLL_MS * Math.pow(1.4, attempt));
       await sleep(Math.round(delay));
     }

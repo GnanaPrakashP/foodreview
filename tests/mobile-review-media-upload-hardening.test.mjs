@@ -94,8 +94,18 @@ test("mobile post flow uploads through media assets sequentially", () => {
   assert.match(mediaPicker, /export async function pickPostImageFromGallery\(\)[\s\S]*allowsEditing: false/);
   assert.match(postCaptureSession, /subscribeToPostCaptures/);
   assert.match(postCaptureSession, /consumePendingPostCaptures/);
-  assert.match(share, /onUploadProgress: setUploadProgress/);
-  assert.match(share, /Posting \$\{uploadPercent\}%/);
+  // Upload progress no longer belongs to this screen: sharing hands the post to
+  // the background queue, and the runner reports progress into the store that
+  // drives the line on Home.
+  assert.match(share, /usePostingStore\.getState\(\)\.enqueue\(/);
+  assert.match(
+    source("mobile/src/providers/PostingQueueRunner.tsx"),
+    /onUploadProgress: \(progress\) => usePostingStore\.getState\(\)\.setProgress\(next\.id, progress\)/
+  );
+  // The percentage moved off this screen with the wait itself. Progress is a
+  // line at the top of Home now, so the composer's action never says "Posting".
+  assert.match(source("mobile/src/components/home/PostingProgressBar.tsx"), /accessibilityRole="progressbar"/);
+  assert.doesNotMatch(share, /Posting \$\{|uploadPercent/);
   assert.match(posts, /height: uploaded\.height \?\? media\.height \?\? null/);
   assert.match(posts, /width: uploaded\.width \?\? media\.width \?\? null/);
 });

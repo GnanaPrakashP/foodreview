@@ -7,6 +7,7 @@ import { memoryRoomSummariesFromPages, useMemoryRoomsQuery } from "@/hooks/useMe
 import { useThemePreference } from "@/hooks/useThemePreference";
 import { mainTabBarStyle } from "@/navigation/mainTabBarStyle";
 import { classifyHomeTabPress, emitActiveHomeTabPress } from "@/navigation/homeTabPress";
+import { PostingQueueRunner } from "@/providers/PostingQueueRunner";
 import { useComposerStore } from "@/stores/composerStore";
 
 const tabs: Record<string, { title: string; icon: LucideIcon }> = {
@@ -33,7 +34,11 @@ export default function TabLayout() {
     [memoryRoomSummaries]
   );
   return (
-    <Tabs
+    <>
+      {/* Owns posts the composer has handed off. It lives here rather than in
+          the Create tab because that tab unmounts the moment a post is shared. */}
+      <PostingQueueRunner />
+      <Tabs
       screenOptions={({ route }) => {
         const tab = tabs[route.name] ?? tabs.index;
         return {
@@ -95,7 +100,8 @@ export default function TabLayout() {
       <Tabs.Screen name="share" />
       <Tabs.Screen name="hungry" options={{ href: null }} />
       <Tabs.Screen name="profile" />
-    </Tabs>
+      </Tabs>
+    </>
   );
 }
 
