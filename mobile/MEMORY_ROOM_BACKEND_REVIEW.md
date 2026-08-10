@@ -186,9 +186,9 @@ None of these are UI problems; they are all data-layer problems.
 
 ---
 
-## 7. CircleBites vs Mattermost — one-glance table
+## 7. Witoh vs Mattermost — one-glance table
 
-| Dimension | CircleBites (today) | Mattermost mobile |
+| Dimension | Witoh (today) | Mattermost mobile |
 | --- | --- | --- |
 | Source of truth | React Query in-memory cache | WatermelonDB (SQLite), offline-first |
 | Realtime | Invalidate → refetch pages/detail/list | Websocket → insert/update one record |

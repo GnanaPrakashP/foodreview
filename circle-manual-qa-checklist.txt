@@ -1,7 +1,7 @@
 ================================================================================
 CIRCLE FEATURE — MANUAL QA CHECKLIST
 ================================================================================
-App: FoodReview
+App: Witoh
 Feature: Circle (social connection system)
 Last updated: 2026-05-07
 

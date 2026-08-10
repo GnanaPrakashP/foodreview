@@ -14,12 +14,12 @@ export default function TermsPage() {
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: "20px", fontSize: "14px", color: "var(--muted)", lineHeight: 1.7, fontFamily: "'DM Sans', sans-serif" }}>
         <section>
-          <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Using CircleBites</h2>
-          <p>CircleBites lets people share food reviews and private Memories. You must be at least 13 and legally able to use the service. Keep your account secure and provide accurate registration information.</p>
+          <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Using Witoh</h2>
+          <p>Witoh lets people share food reviews and private Memories. You must be at least 13 and legally able to use the service. Keep your account secure and provide accurate registration information.</p>
         </section>
         <section>
           <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Your content</h2>
-          <p>You retain rights you have in your content. You grant CircleBites a limited licence to host, process, reproduce and display it only as needed to operate, secure and improve the service according to the visibility you select. You must have permission to upload it.</p>
+          <p>You retain rights you have in your content. You grant Witoh a limited licence to host, process, reproduce and display it only as needed to operate, secure and improve the service according to the visibility you select. You must have permission to upload it.</p>
         </section>
         <section>
           <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Acceptable use</h2>
@@ -35,7 +35,7 @@ export default function TermsPage() {
         </section>
         <section>
           <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Ending use and complaints</h2>
-          <p>You may stop using CircleBites or request account deletion in Settings. We may suspend access for serious or repeated violations. Send copyright, safety or policy complaints with enough information to investigate to hello@circlebites.in.</p>
+          <p>You may stop using Witoh or request account deletion in Settings. We may suspend access for serious or repeated violations. Send copyright, safety or policy complaints with enough information to investigate to hello@circlebites.in.</p>
         </section>
         <section>
           <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Contact</h2>

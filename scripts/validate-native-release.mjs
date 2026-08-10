@@ -54,9 +54,9 @@ const [manifest, gradle, gradleProperties, appConfig, privacy, terms, welcome, l
   read(".github/workflows/native-release.yml")
 ]);
 
-check(/android:usesCleartextTraffic="\$\{circleBitesUsesCleartextTraffic\}"/.test(manifest), "release manifest binds cleartext policy to the application environment");
+check(/android:usesCleartextTraffic="\$\{witohUsesCleartextTraffic\}"/.test(manifest), "release manifest binds cleartext policy to the application environment");
 check(/allowLocalCleartext = appEnvironment in \["local", "development"\]/.test(gradle), "only local development identities allow cleartext traffic");
-check(/circleBitesUsesCleartextTraffic: allowLocalCleartext\.toString\(\)/.test(gradle), "Android manifest receives the environment-bound cleartext policy");
+check(/witohUsesCleartextTraffic: allowLocalCleartext\.toString\(\)/.test(gradle), "Android manifest receives the environment-bound cleartext policy");
 check(/android:allowBackup="false"/.test(manifest), "release manifest disables backup");
 for (const permission of inventory.androidPermissions.blocked) {
   check(new RegExp(`android:name="${permission.replaceAll(".", "\\.")}"[^>]*tools:node="remove"`).test(manifest), `merged-source manifest removes ${permission}`);
@@ -70,20 +70,20 @@ for (const value of ["storeFile", "storePassword", "keyAlias", "keyPassword"]) {
 }
 check(/Injected release signing configuration is incomplete/.test(gradle), "command-line signing injection must be complete");
 check(!/EAS_BUILD[^\n]*(?:sign|credential)|(?:sign|credential)[^\n]*EAS_BUILD/i.test(gradle), "EAS mode cannot bypass release signing validation");
-check(/com\.circlebites\.mobile\.preview/.test(gradle) && /circlebites-preview/.test(gradle), "checked-in Android environment identity separation");
-check(/android:scheme="\$\{circleBitesAuthScheme\}"/.test(manifest), "Android auth scheme is environment-bound");
+check(/com\.circlebites\.mobile\.preview/.test(gradle) && /witoh-preview/.test(gradle), "checked-in Android environment identity separation");
+check(/android:scheme="\$\{witohAuthScheme\}"/.test(manifest), "Android auth scheme is environment-bound");
 check(/android\.enableMinifyInReleaseBuilds=true/.test(gradleProperties), "release minification enabled");
 check(/android\.enableShrinkResourcesInReleaseBuilds=true/.test(gradleProperties), "release resource shrinking enabled");
 check(/parsedPublicHttpsUrl/.test(appConfig) && /EAS builds must bind/.test(appConfig), "production environment validation");
 check(
-  appConfigModule.releaseIdentity("preview").scheme === "circlebites-preview" &&
-    appConfigModule.releaseIdentity("development").scheme === "circlebites-dev",
+  appConfigModule.releaseIdentity("preview").scheme === "witoh-preview" &&
+    appConfigModule.releaseIdentity("development").scheme === "witoh-dev",
   "environment-separated application identity"
 );
 for (const marker of ["Supabase", "Expo", "Sentry", "Memory", "location", "deletion", "backup", "children under 13"]) {
   check(privacy.toLowerCase().includes(marker.toLowerCase()), `privacy disclosure ${marker}`);
 }
-for (const marker of ["CircleBites", "Moderation", "Copyright", "at least 13", "legal review"]) {
+for (const marker of ["Witoh", "Moderation", "Copyright", "at least 13", "legal review"]) {
   check(terms.toLowerCase().includes(marker.toLowerCase()), `terms disclosure ${marker}`);
 }
 check(/agree to the/.test(welcome) && /acknowledge the/.test(welcome), "welcome legal consent wording");

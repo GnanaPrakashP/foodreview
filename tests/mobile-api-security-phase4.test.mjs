@@ -80,7 +80,7 @@ test("install identity is cryptographically random and is never authentication",
   assert.match(install, /return getRandomValues\(bytes\)/);
   assert.match(install, /SecureStore/);
   assert.match(install, /UUID_RE/);
-  assert.doesNotMatch(actor, /x-foodreview-install-id/);
+  assert.doesNotMatch(actor, /x-(?:witoh|foodreview)-install-id/);
 });
 
 test("push tokens are actor/install-bound and cannot be silently reassigned", () => {

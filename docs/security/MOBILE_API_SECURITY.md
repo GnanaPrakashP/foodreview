@@ -1,4 +1,4 @@
-# FoodReview mobile API security contract
+# Witoh mobile API security contract
 
 Date: 2026-07-13
 
@@ -81,10 +81,10 @@ The mobile login flow never asks whether the account exists and has no email/pas
 Allowed production callbacks are only:
 
 ```text
-circlebites://auth/callback
+witoh://auth/callback
 ```
 
-Supabase must allow the query-bearing OAuth form using explicit `circlebites://auth/callback**`, with equivalent development and preview schemes confined to those environments. Mobile creates a cryptographic 256-bit OAuth nonce in SecureStore with a 30-minute expiry. Callback scheme, host, path, credentials, redirect parameters, state/nonce, and flow mode are validated before PKCE code exchange. The nonce is consumed once, so duplicate/replayed callbacks fail.
+Supabase must allow the query-bearing OAuth form using explicit `witoh://auth/callback**`, with equivalent development and preview schemes confined to those environments. Mobile creates a cryptographic 256-bit OAuth nonce in SecureStore with a 30-minute expiry. Callback scheme, host, path, credentials, redirect parameters, state/nonce, and flow mode are validated before PKCE code exchange. The nonce is consumed once, so duplicate/replayed callbacks fail.
 
 Password login/signup/reset/recovery UI, APIs, callbacks, and navigation are absent. The hosted Custom Access Token Hook rejects password token issuance. If Supabase reports a legacy `PASSWORD_RECOVERY` event, mobile signs it out before protected state mounts. See `docs/security/AUTH_PROFILE_BOUNDARY.md` for the provider-level recovery limitation and release gates.
 

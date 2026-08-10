@@ -33,7 +33,7 @@ export async function authorizedApiHeaders(action: string, method = "GET") {
   return {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
-    "X-FoodReview-Install-Id": installId,
+    "X-Witoh-Install-Id": installId,
     ...(normalizedMethod === "GET" || normalizedMethod === "HEAD" ? {} : { "Idempotency-Key": createRequestId() }),
   };
 }
@@ -64,7 +64,7 @@ export async function authorizedJson<T>(
 
   try {
     const method = (init.method ?? "GET").toUpperCase();
-    const securityHeaders = await authorizedApiHeaders(options.action ?? "using CircleBites", method);
+    const securityHeaders = await authorizedApiHeaders(options.action ?? "using Witoh", method);
     const response = await fetch(apiUrl(path), {
       ...init,
       signal: controller.signal,

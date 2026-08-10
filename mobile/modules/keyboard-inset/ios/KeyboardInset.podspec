@@ -4,7 +4,7 @@ Pod::Spec.new do |s|
   s.summary        = 'Native IME-inset-driven container for the chat composer.'
   s.description    = 'Glues the chat surface to the soft keyboard via WindowInsetsAnimation on Android. iOS is a passthrough; iOS keyboard motion stays with the JS driven-height transform.'
   s.author         = ''
-  s.homepage       = 'https://github.com/circlebites/mobile'
+  s.homepage       = 'https://github.com/witoh/mobile'
   s.platforms      = {
     :ios => '15.1',
     :tvos => '15.1'

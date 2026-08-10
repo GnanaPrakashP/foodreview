@@ -1,4 +1,4 @@
-# FoodReview Production Hardening — Phase 1C Cache Isolation
+# Witoh Production Hardening — Phase 1C Cache Isolation
 
 Date: 2026-07-13
 Branch: `hardening/03-cache-isolation`

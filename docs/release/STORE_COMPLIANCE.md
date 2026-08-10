@@ -1,6 +1,6 @@
 # Store compliance
 
-Canonical identity is CircleBites. Store-facing URLs are `https://www.circlebites.in/privacy`, `/terms`, `/support`, and `/delete-account`; contacts are `privacy@circlebites.in` and `hello@circlebites.in`. The old FoodReview repository name, FoodCircle legal email and unresolved `circlebites.app` domain are not store identities.
+Canonical identity is Witoh. Store-facing URLs remain at `https://www.circlebites.in/privacy`, `/terms`, `/support`, and `/delete-account`; contacts remain `privacy@circlebites.in` and `hello@circlebites.in` until branded replacements are provisioned. The legacy repository name, FoodCircle legal email and unresolved `circlebites.app` domain are not store identities.
 
 The web and mobile legal text now cover account/profile data, posts and media, optional location, private Memories/messages/voice, relationships, blocks/reports/moderation, push tokens/install IDs, owner-scoped offline caches/drafts, crash/performance diagnostics, processors, retention/deletion limits, support, children under 13 and copyright/safety complaints. Account deletion is available at Profile > Settings > Security & Account and through public instructions.
 

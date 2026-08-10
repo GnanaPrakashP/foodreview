@@ -43,7 +43,7 @@ export default function AuthCallbackScreen() {
       <AuthCard>
         <View style={styles.headerBlock}>
           <Text style={styles.cardTitle}>Finishing sign in</Text>
-          <Text style={styles.cardText}>Hang tight while CircleBites verifies your account.</Text>
+          <Text style={styles.cardText}>Hang tight while Witoh verifies your account.</Text>
         </View>
 
         {error ? <ErrorMessage>{error}</ErrorMessage> : null}

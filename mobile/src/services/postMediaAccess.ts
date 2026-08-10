@@ -32,7 +32,7 @@ export async function fetchPostMediaAccess(assetIdsInput: string[]) {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         "Content-Type": "application/json",
         "Idempotency-Key": createRequestId(),
-        "X-FoodReview-Install-Id": await getInstallId()
+        "X-Witoh-Install-Id": await getInstallId()
       },
       method: "POST"
     });

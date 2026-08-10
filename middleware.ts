@@ -7,7 +7,7 @@ export function middleware(req: NextRequest) {
   const supplied = req.headers.get("x-request-id")?.trim() ?? "";
   const requestId = REQUEST_ID.test(supplied) ? supplied : crypto.randomUUID();
   requestHeaders.set("x-request-id", requestId);
-  requestHeaders.set("x-foodreview-request-start-ms", String(Date.now()));
+  requestHeaders.set("x-witoh-request-start-ms", String(Date.now()));
   const response = NextResponse.next({ request: { headers: requestHeaders } });
   response.headers.set("X-Request-Id", requestId);
   response.headers.set("X-Correlation-Id", requestId);

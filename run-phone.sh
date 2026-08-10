@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# One-shot runner for the CircleBites dev build on the physical phone.
+# One-shot runner for the Witoh dev build on the physical phone.
 #
 # Wraps `npm run mobile:reinstall:phone` with the env this device needs, and
 # — the reason this exists — resolves the adb device state BEFORE handing off,

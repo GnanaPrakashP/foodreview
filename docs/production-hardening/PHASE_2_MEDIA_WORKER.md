@@ -1,4 +1,4 @@
-# FoodReview Production Hardening — Phase 2 Production-Reliable Media Processing
+# Witoh Production Hardening — Phase 2 Production-Reliable Media Processing
 
 Date: 2026-07-13
 
@@ -14,7 +14,7 @@ Phase 3 supersession note (2026-07-13): the temporary mirrored migration roots a
 
 ## Executive result
 
-FoodReview's generic post-media path is now a durable at-least-once processing system with an exactly-once authoritative result. Upload finalisation and job creation are atomic. Workers claim jobs through a service-only PostgreSQL RPC using `FOR UPDATE SKIP LOCKED`, an expiring lease, a generation, and a random claim token. A crashed worker can be replaced; an old worker cannot complete after its lease is reclaimed. Image and video derivative paths are deterministic and safe to overwrite, while the database completion RPC verifies the current lease, active account, authoritative asset contract, and complete derivative set before publishing `ready` metadata.
+Witoh's generic post-media path is now a durable at-least-once processing system with an exactly-once authoritative result. Upload finalisation and job creation are atomic. Workers claim jobs through a service-only PostgreSQL RPC using `FOR UPDATE SKIP LOCKED`, an expiring lease, a generation, and a random claim token. A crashed worker can be replaced; an old worker cannot complete after its lease is reclaimed. Image and video derivative paths are deterministic and safe to overwrite, while the database completion RPC verifies the current lease, active account, authoritative asset contract, and complete derivative set before publishing `ready` metadata.
 
 Retryable failures use bounded exponential backoff with deterministic jitter. Permanent media failures become `rejected`; exhausted transient failures become operator-visible `dead_letter`; account freeze becomes `cancelled`. A separately leased cleanup state machine removes consumed sources after retention, removes terminal assets, and sweeps unattached ready media. Mobile persists only owner-scoped recovery metadata and staged-file references, resumes upload/finalisation/status reconciliation on same-account startup or foreground, and cannot resume another account's upload.
 

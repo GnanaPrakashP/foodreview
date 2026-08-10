@@ -50,12 +50,12 @@ export async function requestEmailOtp(input: EmailOtpRequestInput): Promise<void
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-FoodReview-Install-Id": await getInstallId()
+        "X-Witoh-Install-Id": await getInstallId()
       },
       body: JSON.stringify({ email })
     });
   } catch {
-    throw new Error("Unable to reach the CircleBites server. Check EXPO_PUBLIC_API_BASE_URL and make sure Next.js is running.");
+    throw new Error("Unable to reach the Witoh server. Check EXPO_PUBLIC_API_BASE_URL and make sure Next.js is running.");
   }
 
   const payload = await response.json().catch(() => null) as { ok?: unknown } | null;
@@ -115,7 +115,7 @@ export async function getAccountLifecycleStatus(accessToken: string): Promise<Ac
     const response = await fetch(apiUrl("/api/mobile/auth/account-status"), {
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        "X-FoodReview-Install-Id": await getInstallId()
+        "X-Witoh-Install-Id": await getInstallId()
       },
       signal: controller.signal
     });
@@ -246,7 +246,7 @@ export function userFacingAuthError(error: unknown, fallback = "Something went w
   if (message.includes("Unable to send verification code")) return "We couldn't send a code right now. Please try again.";
   if (message.includes("Google sign-in was cancelled")) return "Google sign-in was cancelled.";
   if (message.includes("Unable to reach") || message.includes("Missing mobile API URL")) {
-    return "We can't reach CircleBites right now. Please try again later.";
+    return "We can't reach Witoh right now. Please try again later.";
   }
 
   return fallback;

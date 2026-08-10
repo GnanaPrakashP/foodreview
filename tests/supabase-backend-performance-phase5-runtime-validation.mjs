@@ -11,7 +11,7 @@ function run(command, args, options = {}) {
 
 const names = run("docker", ["ps", "--format", "{{.Names}}"]).trim().split(/\s+/);
 const database = names.find((name) => name.startsWith("supabase_db_") && name.includes("foodreview"));
-if (!database) throw new Error("Local FoodReview Supabase database container is not running");
+if (!database) throw new Error("Local Witoh Supabase database container is not running");
 const fixture = readFileSync(new URL("./fixtures/phase5-performance.sql", import.meta.url), "utf8");
 const output = run("docker", ["exec", "-i", database, "psql", "-X", "-q", "-U", "postgres", "-d", "postgres"], { input: fixture });
 

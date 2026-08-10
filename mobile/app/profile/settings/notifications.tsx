@@ -80,7 +80,7 @@ export default function NotificationSettingsScreen() {
         <View style={{ gap: spacing.lg }}>
           {!permissionGranted ? (
             <View style={styles.permissionCard}>
-              <Text style={styles.permissionTitle}>Notifications are off for CircleBites</Text>
+              <Text style={styles.permissionTitle}>Notifications are off for Witoh</Text>
               <Text style={styles.permissionBody}>
                 Turn them on in your device settings to receive any of the alerts below.
               </Text>

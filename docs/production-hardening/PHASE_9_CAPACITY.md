@@ -1,4 +1,4 @@
-# FoodReview production hardening — Phase 9 capacity
+# Witoh production hardening — Phase 9 capacity
 
 Date: 2026-07-14
 
@@ -10,7 +10,7 @@ Source commit: `f9321a9ce43be75cc31eca0135ad3f3beb5dc718`
 
 **NOT PROVEN — harness complete, hosted execution blocked.**
 
-The implementation target is `PASS LOCALLY — HOSTED CAPACITY NOT PROVEN`. No claim that CircleBites supports the launch profile is allowed until the complete hosted and physical-device matrix passes on one recorded production-like topology.
+The implementation target is `PASS LOCALLY — HOSTED CAPACITY NOT PROVEN`. No claim that Witoh supports the launch profile is allowed until the complete hosted and physical-device matrix passes on one recorded production-like topology.
 
 ## Required profile
 

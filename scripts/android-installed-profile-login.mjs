@@ -33,7 +33,7 @@ const keepServer = !args.has("--stop-server-after");
 const clearAppData = !args.has("--keep-app-data");
 
 const failureTerms = [
-  "We can't reach CircleBites right now",
+  "We can't reach Witoh right now",
   "Sign in is unavailable right now",
   "Network request failed",
   "auth_unavailable",
@@ -288,7 +288,7 @@ async function verificationCode(existingMailIds) {
     }
     await delay(300);
   }
-  throw new Error("Timed out waiting for the CircleBites verification code in Mailpit");
+  throw new Error("Timed out waiting for the Witoh verification code in Mailpit");
 }
 
 function allStrings(value, output = []) {

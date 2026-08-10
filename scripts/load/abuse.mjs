@@ -36,13 +36,13 @@ const installId = `00000000-0000-4000-8000-${runId.replaceAll("-", "").slice(0, 
 
 for (const actor of actors) {
   await timedRequest(metrics, "account-switch-status", `${apiBase}/api/mobile/auth/account-status`, {
-    headers: actorHeaders(actor, { "X-CircleBites-Load-Run": runId, "X-FoodReview-Install-Id": installId })
+    headers: actorHeaders(actor, { "X-Witoh-Load-Run": runId, "X-Witoh-Install-Id": installId })
   });
 }
 
 await timedRequest(metrics, "invalid-token-denial", `${apiBase}/api/mobile/auth/account-status`, {
   expectedStatuses: [401],
-  headers: { Authorization: "Bearer invalid-load-token", "X-CircleBites-Load-Run": runId, "X-FoodReview-Install-Id": installId }
+  headers: { Authorization: "Bearer invalid-load-token", "X-Witoh-Load-Run": runId, "X-Witoh-Install-Id": installId }
 });
 const expiredShapedToken = [
   Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url"),
@@ -51,7 +51,7 @@ const expiredShapedToken = [
 ].join(".");
 await timedRequest(metrics, "expired-shaped-token-denial", `${apiBase}/api/mobile/auth/account-status`, {
   expectedStatuses: [401],
-  headers: { Authorization: `Bearer ${expiredShapedToken}`, "X-CircleBites-Load-Run": runId, "X-FoodReview-Install-Id": installId }
+  headers: { Authorization: `Bearer ${expiredShapedToken}`, "X-Witoh-Load-Run": runId, "X-Witoh-Install-Id": installId }
 });
 
 const disposableToken = actors[0].accessToken;
@@ -63,7 +63,7 @@ await timedRequest(metrics, "auth-logout", `${supabaseBase}/auth/v1/logout?scope
 });
 await timedRequest(metrics, "logout-token-denial", `${apiBase}/api/mobile/auth/account-status`, {
   expectedStatuses: [401],
-  headers: { Authorization: `Bearer ${disposableToken}`, "X-CircleBites-Load-Run": runId, "X-FoodReview-Install-Id": installId }
+  headers: { Authorization: `Bearer ${disposableToken}`, "X-Witoh-Load-Run": runId, "X-Witoh-Install-Id": installId }
 });
 
 let otpAccepted = 0;
@@ -76,8 +76,8 @@ for (let index = 0; index < attempts; index += 1) {
     expectedStatuses: [202, 429],
     headers: {
       "Content-Type": "application/json",
-      "X-CircleBites-Load-Run": runId,
-      "X-FoodReview-Install-Id": installId
+      "X-Witoh-Load-Run": runId,
+      "X-Witoh-Install-Id": installId
     },
     method: "POST"
   });

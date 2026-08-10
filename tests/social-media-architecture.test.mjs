@@ -23,7 +23,7 @@ test("web review media uses visibility-aware generic upload intents and disables
   assert.match(legacyFinalize, /intent\.category === "post"[\s\S]+status: 410/);
 });
 
-test("feeds share FoodReview-native enrichment assembly", () => {
+test("feeds share Witoh-native enrichment assembly", () => {
   const helper = source("lib/server/feed-assembly.ts");
   const publicFeed = source("app/api/feed/public/route.ts");
   const circleFeed = source("lib/circle-feed.ts");
@@ -61,7 +61,7 @@ test("engagement mutations own notifications and mobile clients use API routes",
   assert.doesNotMatch(mobileComments, /\.from\("comments"\)[\s\S]{0,220}\.(insert|delete)/);
 });
 
-test("reports and cleanup are native FoodReview protected interfaces", () => {
+test("reports and cleanup are native Witoh protected interfaces", () => {
   const reportRoute = source("app/api/reports/route.ts");
   const moderationRoute = source("app/api/internal/moderation/reports/route.ts");
   const cleanupRoute = source("app/api/internal/review-media-cleanup/route.ts");

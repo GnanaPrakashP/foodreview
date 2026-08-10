@@ -1,7 +1,7 @@
 # Mobile runtime architecture
 
 Date: 2026-07-13
-Applies to: FoodReview/CircleBites Expo React Native app
+Applies to: Witoh/Witoh Expo React Native app
 
 ## Runtime ownership
 

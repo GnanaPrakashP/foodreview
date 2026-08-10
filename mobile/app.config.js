@@ -13,9 +13,9 @@ const MEMORY_ROOM_CHAT_RENDERERS = new Set([
 ]);
 const PROD_IDENTITY = Object.freeze({
   androidPackage: "com.circlebites.mobile",
-  displayName: "CircleBites",
+  displayName: "Witoh",
   iosBundleIdentifier: "com.circlebites.mobile",
-  scheme: "circlebites"
+  scheme: "witoh"
 });
 
 function applicationEnvironment(env = process.env) {
@@ -133,7 +133,7 @@ function validateClientConfiguration(env = process.env, extra = {}) {
       publicWebUrl.search ||
       publicWebUrl.hash
     ) {
-      throw new Error("EXPO_PUBLIC_WEB_BASE_URL must be the canonical CircleBites web origin");
+      throw new Error("EXPO_PUBLIC_WEB_BASE_URL must be the canonical Witoh web origin");
     }
     const sentryDsn = parsedPublicHttpsUrl(env.EXPO_PUBLIC_SENTRY_DSN, "EXPO_PUBLIC_SENTRY_DSN", { allowUsername: true });
     if (!sentryDsn.username) throw new Error("EXPO_PUBLIC_SENTRY_DSN must include a public DSN key");
@@ -217,7 +217,7 @@ module.exports = ({ config: expoConfig } = {}) => {
           ...config.ios?.infoPlist?.NSAppTransportSecurity,
           NSAllowsLocalNetworking: true
         },
-        NSLocalNetworkUsageDescription: "CircleBites connects to this Mac only while running the dedicated local-device test environment."
+        NSLocalNetworkUsageDescription: "Witoh connects to this Mac only while running the dedicated local-device test environment."
       }
     };
   }

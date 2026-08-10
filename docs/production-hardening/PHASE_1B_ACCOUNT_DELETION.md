@@ -1,4 +1,4 @@
-# FoodReview Production Hardening — Phase 1B Account Deletion
+# Witoh Production Hardening — Phase 1B Account Deletion
 
 Date: 2026-07-13
 
@@ -10,7 +10,7 @@ Release verification status: BLOCKED pending disposable hosted-staging execution
 
 ## Executive result
 
-FoodReview no longer treats account deletion as a synchronous client request that removes the Auth user before all Storage and application records are proven clean. The active mobile flow now creates an owner-only durable deletion job and freezes the account atomically. A protected, bounded, lease-based worker inventories and verifies Storage deletion, cleans application data, reconciles shared data, deletes the Supabase Auth user last, and retains only sanitized operational metadata for a bounded 30-day window.
+Witoh no longer treats account deletion as a synchronous client request that removes the Auth user before all Storage and application records are proven clean. The active mobile flow now creates an owner-only durable deletion job and freezes the account atomically. A protected, bounded, lease-based worker inventories and verifies Storage deletion, cleans application data, reconciles shared data, deletes the Supabase Auth user last, and retains only sanitized operational metadata for a bounded 30-day window.
 
 The local implementation passes behavior-level unit tests, a clean root migration reset, Supabase SQL lint, Next production build, Android/iOS Expo exports, Phase 1A security tests, and a real local Auth/RLS/Storage/HTTP lifecycle with another user's data present. The hosted matrix was not run and production has not been mutated.
 
@@ -82,7 +82,7 @@ The freeze occurs in the same transaction that creates or reuses the durable job
 - Server routes using `getAuthenticatedCircleActor()` reject a deleting or RLS-suppressed profile and never reconstruct it from Auth metadata/email.
 - Phase 1A media access checks the owner's active profile before issuing a fresh signed URL, including anonymous access to formerly public content.
 
-Already-issued Phase 1A signed URLs retain their intentional maximum five-minute validity. FoodReview cannot truthfully revoke bytes already downloaded to a device or prove immediate third-party CDN cache erasure.
+Already-issued Phase 1A signed URLs retain their intentional maximum five-minute validity. Witoh cannot truthfully revoke bytes already downloaded to a device or prove immediate third-party CDN cache erasure.
 
 ## Job state machine
 

@@ -48,7 +48,7 @@ async function controller(action) {
   return timedRequest(metrics, `failure-controller-${action}`, `${controllerUrl.href.replace(/\/$/, "")}/v1/failures/${failureCase.id}`, {
     body: JSON.stringify({ action, protocol: matrix.controllerProtocol, runId, stagingId: target.stagingId }),
     expectedStatuses: [200, 202],
-    headers: { Authorization: `Bearer ${controllerToken}`, "Content-Type": "application/json", "X-CircleBites-Load-Run": runId },
+    headers: { Authorization: `Bearer ${controllerToken}`, "Content-Type": "application/json", "X-Witoh-Load-Run": runId },
     method: "POST"
   });
 }
@@ -68,7 +68,7 @@ try {
     await timedRequest(metrics, "failure-pressure-health", `${apiBase}/api/health`, { expectedStatuses: [200, 502, 503, 504], timeoutMs: 5000 });
     await timedRequest(metrics, "failure-pressure-auth", `${apiBase}/api/mobile/auth/account-status`, {
       expectedStatuses: [200, 401, 502, 503, 504],
-      headers: actorHeaders(actor, { "X-CircleBites-Load-Run": runId }),
+      headers: actorHeaders(actor, { "X-Witoh-Load-Run": runId }),
       timeoutMs: 5000
     });
     await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -91,7 +91,7 @@ while (Date.now() < recoveryDeadline) {
   const health = await timedRequest(metrics, "failure-recovery-health", `${apiBase}/api/health`, { timeoutMs: 5000 });
   if (health.expected) {
     const actorHealth = await timedRequest(metrics, "failure-recovery-auth", `${apiBase}/api/mobile/auth/account-status`, {
-      headers: actorHeaders(actor, { "X-CircleBites-Load-Run": runId }), timeoutMs: 5000
+      headers: actorHeaders(actor, { "X-Witoh-Load-Run": runId }), timeoutMs: 5000
     });
     if (actorHealth.expected) {
       recovered = true;
@@ -105,7 +105,7 @@ let privacyProbePassed = true;
 const forbiddenRoomId = actor.forbiddenRoomIds?.[0];
 if (forbiddenRoomId) {
   const probe = await timedRequest(metrics, "failure-privacy-probe", `${apiBase}/api/mobile/memories/read?action=detail&roomId=${forbiddenRoomId}`, {
-    expectedStatuses: [403, 404], headers: actorHeaders(actor, { "X-CircleBites-Load-Run": runId })
+    expectedStatuses: [403, 404], headers: actorHeaders(actor, { "X-Witoh-Load-Run": runId })
   });
   privacyProbePassed = probe.expected;
 }

@@ -62,7 +62,7 @@ export default function SecurityScreen() {
 
       <View style={styles.card}>
         <Text style={styles.noteText}>
-          CircleBites does not use account passwords. Sign in with Google or a one-time code sent to your email.
+          Witoh does not use account passwords. Sign in with Google or a one-time code sent to your email.
         </Text>
       </View>
     </ProfileSubScreen>

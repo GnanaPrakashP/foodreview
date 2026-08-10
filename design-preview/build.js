@@ -1,6 +1,6 @@
-/* CircleBites — design-review mockups generator.
+/* Witoh — design-review mockups generator.
  * Reads nothing at runtime; encodes the RN screens as static HTML phone frames.
- * Output: circlebites-screens.html  (then rendered to PDF by headless Chrome). */
+ * Output: witoh-screens.html  (then rendered to PDF by headless Chrome). */
 const fs = require("fs");
 const path = require("path");
 
@@ -209,7 +209,7 @@ S("Onboarding — username", "Post-signup. Confirms name and picks the @handle f
   `<div class="screen-pad" style="justify-content:center">
     <div class="auth-card">
       <div class="auth-title" style="text-align:left;font-size:20px">Choose your username</div>
-      <div class="auth-text" style="text-align:left;margin-bottom:18px">This is how friends find your food reviews on CircleBites.</div>
+      <div class="auth-text" style="text-align:left;margin-bottom:18px">This is how friends find your food reviews on Witoh.</div>
       <div style="display:flex;gap:8px">
         <div class="field" style="flex:1">${ic("user", { size: 16, color: C.muted })}<input value="Aarav"></div>
         <div class="field" style="flex:1">${ic("user", { size: 16, color: C.muted })}<input value="Mehta"></div>
@@ -465,7 +465,7 @@ S("Privacy Policy", "Static legal page from settings, broken into short sections
   `<div class="route-hdr"><span class="rh-back">${ic("arrowLeft", { size: 20, color: C.cream })}</span><div><div class="rh-title">Privacy Policy</div><div class="rh-sub">Last updated: May 2025</div></div></div>
   <div class="screen-pad" style="gap:18px;padding-top:6px">
     ${[["What we collect", "We collect your name, email address, and the food reviews you post. Photos you upload are stored securely. We do not sell your data to any third party."],
-    ["How we use it", "Your data is used solely to power the CircleBites experience, showing your reviews to your circle and letting you discover what friends are eating."],
+    ["How we use it", "Your data is used solely to power the Witoh experience, showing your reviews to your circle and letting you discover what friends are eating."],
     ["Deleting your data", "You can delete your account at any time from settings. This permanently removes your profile and all your reviews from our systems."],
     ["Contact", "Questions? Email us at privacy@foodcircle.app"]].map(([h, b]) => `<div><div class="legal-h">${h}</div><div class="legal-b">${b}</div></div>`).join("")}
   </div>`,
@@ -567,13 +567,13 @@ let pages = cover;
 for (let i = 0; i < screens.length; i += 2) {
   const pair = screens.slice(i, i + 2);
   pages += `<section class="page board">
-    <div class="board-head"><span class="board-num">${String(i / 2 + 1).padStart(2, "0")}</span><span class="board-brand">CircleBites · Design Review</span></div>
+    <div class="board-head"><span class="board-num">${String(i / 2 + 1).padStart(2, "0")}</span><span class="board-brand">Witoh · Design Review</span></div>
     <div class="board-grid">${pair.map(phone).join("")}</div>
   </section>`;
 }
 
 const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<title>CircleBites — Screens</title>
+<title>Witoh — Screens</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,400;1,9..40,600&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
@@ -896,5 +896,5 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:#0a0a0a;color:#fff}
 .ti-send{width:38px;height:38px;border-radius:999px;background:rgba(51,144,236,0.16);display:flex;align-items:center;justify-content:center}
 </style></head><body>${pages}</body></html>`;
 
-fs.writeFileSync(path.join(__dirname, "circlebites-screens.html"), html);
-console.log("Wrote circlebites-screens.html with", screens.length, "screens,", Math.ceil(screens.length / 2) + 1, "pages");
+fs.writeFileSync(path.join(__dirname, "witoh-screens.html"), html);
+console.log("Wrote witoh-screens.html with", screens.length, "screens,", Math.ceil(screens.length / 2) + 1, "pages");

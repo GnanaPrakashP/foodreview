@@ -645,7 +645,7 @@ async function routeJson(pathname, session, body, method = "POST") {
       Authorization: `Bearer ${session.token}`,
       "Content-Type": "application/json",
       "Idempotency-Key": randomUUID(),
-      "X-FoodReview-Install-Id": session.installId,
+      "X-Witoh-Install-Id": session.installId,
       "X-Forwarded-For": session.ip
     },
     method
@@ -877,7 +877,7 @@ async function signedViewerFetch(pathname, session, body) {
       Authorization: `Bearer ${session.token}`,
       "Content-Type": "application/json",
       "Idempotency-Key": randomUUID(),
-      "X-FoodReview-Install-Id": session.installId,
+      "X-Witoh-Install-Id": session.installId,
       "X-Forwarded-For": session.ip
     },
     method: body ? "POST" : "GET"

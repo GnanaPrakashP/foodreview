@@ -1396,7 +1396,7 @@ export const PostFeed = forwardRef<PostFeedHandle, PostFeedProps>(function PostF
       if (loadingComponent) return loadingComponent;
       return (
         <View style={styles.stateWrap}>
-          <LoadingState message="Fetching the latest CircleBites posts." title="Loading feed" />
+          <LoadingState message="Fetching the latest Witoh posts." title="Loading feed" />
         </View>
       );
     }
@@ -1691,7 +1691,7 @@ export const PostFeed = forwardRef<PostFeedHandle, PostFeedProps>(function PostF
   );
 });
 
-export function SignedOutFeedState({ message = "Sign in to see your CircleBites data." }: { message?: string }) {
+export function SignedOutFeedState({ message = "Sign in to see your Witoh data." }: { message?: string }) {
   const router = useRouter();
 
   return (

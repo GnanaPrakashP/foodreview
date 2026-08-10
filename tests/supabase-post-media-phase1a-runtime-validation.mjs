@@ -103,7 +103,7 @@ async function routeJson(pathname, token, body, method = "POST") {
     headers: {
       "Content-Type": "application/json",
       "X-Forwarded-For": TEST_IP,
-      "X-FoodReview-Install-Id": INSTALL_ID,
+      "X-Witoh-Install-Id": INSTALL_ID,
       "Idempotency-Key": randomUUID(),
       ...(token ? { Authorization: `Bearer ${token}` } : {})
     },

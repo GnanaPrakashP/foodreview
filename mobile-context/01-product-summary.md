@@ -1,6 +1,6 @@
-# CircleBites Product Summary
+# Witoh Product Summary
 
-CircleBites is a social food review app centered on real posts from people the user trusts. The current web app is a Next.js App Router product backed by Supabase, Google Places, Supabase Storage, and a small set of server routes for moderation, notifications, and cache-aware data loading.
+Witoh is a social food review app centered on real posts from people the user trusts. The current web app is a Next.js App Router product backed by Supabase, Google Places, Supabase Storage, and a small set of server routes for moderation, notifications, and cache-aware data loading.
 
 Do not port the web UI directly. Treat the web app as the source of product behavior, data contracts, validation rules, and ranking logic. Build the mobile app as a native React Native + Expo experience.
 
@@ -42,7 +42,7 @@ For mobile v1, keep the same product areas but make them native:
 
 ## Audience And Tone
 
-CircleBites feels like a tight food circle, not a generic restaurant directory. The feed should feel personal, fast, image-led, and snackable. Discovery should answer practical questions:
+Witoh feels like a tight food circle, not a generic restaurant directory. The feed should feel personal, fast, image-led, and snackable. Discovery should answer practical questions:
 
 - What should I eat nearby?
 - Which friends have been there?

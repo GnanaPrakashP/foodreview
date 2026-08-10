@@ -195,7 +195,7 @@ function authHarness() {
   };
   const linking = {
     createURL: (path, { queryParams }) => {
-      const url = new URL(`circlebites://auth/${path.split("/").at(-1)}`);
+      const url = new URL(`witoh://auth/${path.split("/").at(-1)}`);
       for (const [key, value] of Object.entries(queryParams)) url.searchParams.set(key, value);
       return url.toString();
     }
@@ -220,7 +220,7 @@ function authHarness() {
     };
     if (id === "@/services/profiles") return { actorFromProfile: (profile) => profile, getCurrentUserProfile: async () => null };
     if (id === "@/services/installIdentity") return installIdentity;
-    if (id === "@/config/releaseEnvironment") return { authSchemeForEnvironment: () => "circlebites" };
+    if (id === "@/config/releaseEnvironment") return { authSchemeForEnvironment: () => "witoh" };
     if (id === "@supabase/supabase-js") return {};
     throw new Error(`Unexpected import: ${id}`);
   }, {
@@ -243,7 +243,7 @@ test("email OTP requests are generic and six-digit verification creates the sess
   assert.equal(otpRequests.length, 1);
   assert.equal(otpRequests[0].path, "/api/mobile/auth/email-otp");
   assert.equal(JSON.parse(otpRequests[0].init.body).email, "new@example.test");
-  assert.ok(otpRequests[0].init.headers["X-FoodReview-Install-Id"]);
+  assert.ok(otpRequests[0].init.headers["X-Witoh-Install-Id"]);
 
   const result = await auth.verifyEmailOtp({ email: " New@Example.Test ", token: "123456" });
   assert.equal(result.session.access_token, "otp-token");
@@ -351,7 +351,7 @@ test("new and incomplete accounts receive the native profile onboarding flow", (
   assert.doesNotMatch(onboarding, /Add your name and choose a username/);
   assert.match(onboarding, /placeholder="Name"/);
   assert.match(onboarding, /placeholder="Username"/);
-  assert.match(onboarding, /Continue to CircleBites/);
+  assert.match(onboarding, /Continue to Witoh/);
   assert.match(onboarding, /BackHandler\.addEventListener\("hardwareBackPress"/);
   assert.match(onboarding, /Leave profile setup\?/);
   assert.match(onboarding, /Continue setup/);
@@ -372,7 +372,7 @@ test("production Google OAuth callback is app-bound and rejects Vercel hosts", a
   const { auth, exchanges, redirects } = authHarness();
   await auth.signInWithGoogle();
   const redirect = new URL(redirects.at(-1));
-  assert.equal(redirect.protocol, "circlebites:");
+  assert.equal(redirect.protocol, "witoh:");
   assert.equal(redirect.hostname, "auth");
   assert.equal(redirect.pathname, "/callback");
   assert.doesNotMatch(redirect.toString(), /vercel|localhost|exp:\/\//i);

@@ -1,8 +1,8 @@
-# CircleBites Mobile
+# Witoh Mobile
 
-Expo React Native foundation for CircleBites.
+Expo React Native foundation for Witoh.
 
-This app now has the CircleBites mobile shell, DM Sans typography, email/password auth, Supabase-backed feeds, current profile loading, and post creation wired through the existing service layer.
+This app now has the Witoh mobile shell, DM Sans typography, email/password auth, Supabase-backed feeds, current profile loading, and post creation wired through the existing service layer.
 
 ## Source Of Truth
 
@@ -27,7 +27,7 @@ Shared memory screens remain secondary routes under `app/memories/*`. They are n
 - Expo Router app shell.
 - TypeScript with strict mode.
 - Safe-area-aware layout.
-- CircleBites dark theme tokens copied from the web app.
+- Witoh dark theme tokens copied from the web app.
 - Shared UI primitives in `src/components/ui`.
 - Circle, Explore, Hungry, and Profile render Supabase-backed data or honest empty states.
 - Share creates real posts by uploading an image and inserting a review row.

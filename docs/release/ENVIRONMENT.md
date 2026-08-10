@@ -1,6 +1,6 @@
-# CircleBites release environments
+# Witoh release environments
 
-CircleBites has three EAS environments. `development` uses the `circlebites-dev` scheme and `.dev` application identifiers; `preview` uses `circlebites-preview` and `.preview`; `production` alone uses `circlebites`, `com.circlebites.mobile`, and store distribution. Local native development maps to the development identity. The checked-in Android Gradle project and generated iOS configuration derive the same IDs, labels and callback schemes from `EXPO_PUBLIC_APP_ENVIRONMENT`; EAS must supply endpoint values from its named environment. No profile embeds credentials in `eas.json`.
+Witoh has three EAS environments. `development` uses the `witoh-dev` scheme and `.dev` application identifiers; `preview` uses `witoh-preview` and `.preview`; `production` alone uses `witoh`, `com.circlebites.mobile`, and store distribution. Local native development maps to the development identity. The checked-in Android Gradle project and generated iOS configuration derive the same IDs, labels and callback schemes from `EXPO_PUBLIC_APP_ENVIRONMENT`; EAS must supply endpoint values from its named environment. No profile embeds credentials in `eas.json`.
 
 ## Variable ownership
 
@@ -18,9 +18,9 @@ Secret values are owned in the deployment secret manager, not `.env`, Git, EAS p
 
 Configure each Supabase Auth environment with only its matching callbacks:
 
-- development: `circlebites-dev://auth/callback`
-- preview: `circlebites-preview://auth/callback`
-- production: `circlebites://auth/callback`
+- development: `witoh-dev://auth/callback`
+- preview: `witoh-preview://auth/callback`
+- production: `witoh://auth/callback`
 
 Google OAuth returns through the matching `/auth/callback`. Passwordless email authentication uses a six-digit OTP and does not require an app callback. Password recovery callbacks are not allowlisted. Hosted Supabase must use the checked-in OTP length, expiry, resend interval and `{{ .Token }}` email template, and must activate `public.circlebites_access_token_hook` as its SQL Custom Access Token Hook. The app validates scheme, host, path, flow mode, one-time nonce and expiry for OAuth callbacks.
 

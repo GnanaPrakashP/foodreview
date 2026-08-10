@@ -442,7 +442,7 @@ export function AccountSessionBoundary({ children }: PropsWithChildren) {
 
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "PASSWORD_RECOVERY") {
-        // CircleBites is OTP/Google only. Reject any legacy recovery session
+        // Witoh is OTP/Google only. Reject any legacy recovery session
         // before it can mount an account-owned cache or protected route.
         bufferedSession = null;
         void logout().catch(() => {});

@@ -41,7 +41,7 @@ export const fontStyles = {
   }
 } as const;
 
-export function useCircleBitesFonts() {
+export function useWitohFonts() {
   return useFonts({
     [fontFamilies.regular]: DMSans_400Regular,
     [fontFamilies.regularItalic]: DMSans_400Regular_Italic,

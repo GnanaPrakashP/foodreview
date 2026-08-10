@@ -372,7 +372,7 @@ export async function GET(
                 Real food reviews from people you trust
               </div>
               <div style={{ display: "flex", fontSize: "11px", color: "#B8AFA3", marginTop: "4px", fontFamily: dmSansFamily }}>
-                Discover the best bites near you on CircleBites
+                Discover the best bites near you on Witoh
               </div>
             </div>
             <div

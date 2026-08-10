@@ -16,7 +16,7 @@ const DEFAULT_METRO_PORT = 8081;
 const LOCAL_SUPABASE_PORT = 54321;
 
 function printHelp() {
-  console.log(`Dedicated local-device environment for CircleBites.
+  console.log(`Dedicated local-device environment for Witoh.
 
 The normal hosted .env/.env.local files are never edited.
 
@@ -144,7 +144,7 @@ function localDeviceEnv(status, advertisedHost, apiPort) {
   const apiUrl = `http://${advertisedHost}:${apiPort}`;
   return {
     ...process.env,
-    CIRCLEBITES_LOCAL_DEVICE: "1",
+    WITOH_LOCAL_DEVICE: "1",
     EXPO_PUBLIC_API_BASE_URL: apiUrl,
     EXPO_PUBLIC_APP_ENVIRONMENT: "local",
     EXPO_PUBLIC_RELEASE_CHANNEL: "local-device",
@@ -184,7 +184,7 @@ function startDetached(label, command, args, cwd, env, port) {
   if (occupied.length > 0) {
     throw new Error(`${label} port ${port} is already in use by pid ${occupied.join(", ")}. Stop it before starting the dedicated local-device environment.`);
   }
-  const logPath = path.join(tmpdir(), `circlebites-local-device-${label.toLowerCase()}-${port}.log`);
+  const logPath = path.join(tmpdir(), `witoh-local-device-${label.toLowerCase()}-${port}.log`);
   const out = openSync(logPath, "a");
   const err = openSync(logPath, "a");
   const child = spawn(command, args, { cwd, detached: true, env, stdio: ["ignore", out, err] });

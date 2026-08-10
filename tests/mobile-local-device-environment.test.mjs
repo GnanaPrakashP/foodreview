@@ -39,7 +39,7 @@ test("Supabase service credentials remain API-only during native builds and Metr
 
 test("Android USB mode reverses Metro, API, and local Supabase ports", () => {
   assert.match(orchestrator, /Dedicated Android local-device environment:[^\n]*Supabase 127\.0\.0\.1/);
-  assert.match(androidInstaller, /CIRCLEBITES_LOCAL_DEVICE === "1"/);
+  assert.match(androidInstaller, /WITOH_LOCAL_DEVICE === "1"/);
   assert.match(androidInstaller, /reverse", `tcp:\$\{options\.port\}`/);
   assert.match(androidInstaller, /reverse", `tcp:\$\{apiPort\(mobileApiUrl\)}`/);
   assert.match(androidInstaller, /reverse", `tcp:\$\{apiPort\(mobileSupabaseUrl\)}`/);

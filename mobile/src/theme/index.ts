@@ -1,4 +1,4 @@
-export { fontFamilies, fontStyles, useCircleBitesFonts } from "@/theme/fonts";
+export { fontFamilies, fontStyles, useWitohFonts } from "@/theme/fonts";
 export {
   teal,
   memoryPurple,

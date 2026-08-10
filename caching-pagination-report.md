@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make CircleBites feel seamless: fast first paint, stable back navigation, no surprising feed reshuffles, no duplicate posts, and predictable pagination across Circle, Explore, Hungry, profile, restaurant, and notification surfaces.
+Make Witoh feel seamless: fast first paint, stable back navigation, no surprising feed reshuffles, no duplicate posts, and predictable pagination across Circle, Explore, Hungry, profile, restaurant, and notification surfaces.
 
 ## Current Architecture
 

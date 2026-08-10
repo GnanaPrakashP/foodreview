@@ -127,7 +127,7 @@ export default function OnboardingPage() {
       {/* Wordmark */}
       <div style={{ textAlign: "center", marginBottom: "28px" }}>
         <p style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 800, fontSize: "28px", color: "var(--orange)" }}>
-          CircleBites
+          Witoh
         </p>
         <p style={{ fontSize: "13px", color: "var(--muted)", marginTop: "4px", fontFamily: "'DM Sans', sans-serif" }}>
           One last step

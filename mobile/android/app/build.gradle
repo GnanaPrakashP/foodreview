@@ -20,10 +20,10 @@ react {
     cliFile = new File(["node", "--print", "require.resolve('@expo/cli', { paths: [require.resolve('expo/package.json')] })"].execute(null, rootDir).text.trim())
     bundleCommand = "export:embed"
 
-    // Opt-in performance builds: `-PcircleBitesBundleDebugJs=true` embeds the
+    // Opt-in performance builds: `-PwitohBundleDebugJs=true` embeds the
     // optimized release JS bundle (no Metro, __DEV__ off) into the debug
     // variant so scroll/perf feel can be judged without release signing.
-    if ((findProperty('circleBitesBundleDebugJs') ?: 'false').toBoolean()) {
+    if ((findProperty('witohBundleDebugJs') ?: 'false').toBoolean()) {
         debuggableVariants = []
     }
 
@@ -76,26 +76,26 @@ react {
 def enableMinifyInReleaseBuilds = (findProperty('android.enableMinifyInReleaseBuilds') ?: false).toBoolean()
 def appEnvironment = (System.getenv("EXPO_PUBLIC_APP_ENVIRONMENT") ?: "local").trim().toLowerCase()
 if (!(appEnvironment in ["local", "development", "preview", "production"])) {
-    throw new GradleException("Unsupported CircleBites application environment: ${appEnvironment}")
+    throw new GradleException("Unsupported Witoh application environment: ${appEnvironment}")
 }
 def nativeIdentity = appEnvironment == "production"
-    ? [applicationId: "com.circlebites.mobile", label: "CircleBites", scheme: "circlebites"]
+    ? [applicationId: "com.circlebites.mobile", label: "Witoh", scheme: "witoh"]
     : appEnvironment == "preview"
-        ? [applicationId: "com.circlebites.mobile.preview", label: "CircleBites Preview", scheme: "circlebites-preview"]
-        : [applicationId: "com.circlebites.mobile.dev", label: "CircleBites Dev", scheme: "circlebites-dev"]
+        ? [applicationId: "com.circlebites.mobile.preview", label: "Witoh Preview", scheme: "witoh-preview"]
+        : [applicationId: "com.circlebites.mobile.dev", label: "Witoh Dev", scheme: "witoh-dev"]
 def allowLocalCleartext = appEnvironment in ["local", "development"]
 def allowShellProfiling = appEnvironment != "production" &&
     System.getenv("EXPO_PUBLIC_PERFORMANCE_PROFILE") == "1"
 def releaseSigningValues = [
-    storeFile: System.getenv("CIRCLEBITES_RELEASE_STORE_FILE") ?: findProperty("CIRCLEBITES_RELEASE_STORE_FILE"),
-    storePassword: System.getenv("CIRCLEBITES_RELEASE_STORE_PASSWORD") ?: findProperty("CIRCLEBITES_RELEASE_STORE_PASSWORD"),
-    keyAlias: System.getenv("CIRCLEBITES_RELEASE_KEY_ALIAS") ?: findProperty("CIRCLEBITES_RELEASE_KEY_ALIAS"),
-    keyPassword: System.getenv("CIRCLEBITES_RELEASE_KEY_PASSWORD") ?: findProperty("CIRCLEBITES_RELEASE_KEY_PASSWORD")
+    storeFile: System.getenv("WITOH_RELEASE_STORE_FILE") ?: findProperty("WITOH_RELEASE_STORE_FILE"),
+    storePassword: System.getenv("WITOH_RELEASE_STORE_PASSWORD") ?: findProperty("WITOH_RELEASE_STORE_PASSWORD"),
+    keyAlias: System.getenv("WITOH_RELEASE_KEY_ALIAS") ?: findProperty("WITOH_RELEASE_KEY_ALIAS"),
+    keyPassword: System.getenv("WITOH_RELEASE_KEY_PASSWORD") ?: findProperty("WITOH_RELEASE_KEY_PASSWORD")
 ]
 def configuredReleaseSigning = releaseSigningValues.values().every { value -> value != null && value.toString().trim() }
 def partialReleaseSigning = releaseSigningValues.values().any { value -> value != null && value.toString().trim() } && !configuredReleaseSigning
 if (partialReleaseSigning) {
-    throw new GradleException("CircleBites release signing configuration is incomplete")
+    throw new GradleException("Witoh release signing configuration is incomplete")
 }
 
 /**
@@ -125,10 +125,10 @@ android {
         versionCode 1
         versionName "1.0.0"
         manifestPlaceholders = [
-            circleBitesAppLabel: nativeIdentity.label,
-            circleBitesAuthScheme: nativeIdentity.scheme,
-            circleBitesProfileableShell: allowShellProfiling.toString(),
-            circleBitesUsesCleartextTraffic: allowLocalCleartext.toString()
+            witohAppLabel: nativeIdentity.label,
+            witohAuthScheme: nativeIdentity.scheme,
+            witohProfileableShell: allowShellProfiling.toString(),
+            witohUsesCleartextTraffic: allowLocalCleartext.toString()
         ]
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""

@@ -16,7 +16,7 @@ import { SafeAreaView, type Edge, useSafeAreaInsets } from "react-native-safe-ar
 import { themeColorsFor, useThemePreference } from "@/hooks/useThemePreference";
 import { fontStyles, spacing, typography } from "@/theme";
 
-const logoSource = require("../../../assets/circlebites-logo.png");
+const logoSource = require("../../../assets/witoh-logo.png");
 
 type AuthShellProps = {
   addTopInsetToContent?: boolean;
@@ -97,7 +97,7 @@ export function AuthHero() {
       <View style={styles.logo}>
         <Image source={logoSource} style={styles.logoImage} contentFit="cover" />
       </View>
-      <Text style={styles.wordmark}>CircleBites</Text>
+      <Text style={styles.wordmark}>Witoh</Text>
       <Text style={styles.tagline}>What's your circle eating?</Text>
     </View>
   );

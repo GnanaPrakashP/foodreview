@@ -1,4 +1,4 @@
-# CircleBites production SLOs and capacity gates
+# Witoh production SLOs and capacity gates
 
 These are initial release gates. Hosted Phase 9 evidence must validate them before launch; tuning requires owner approval, measured evidence and a runbook update.
 

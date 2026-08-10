@@ -59,7 +59,7 @@ invariant(!safety.abortReason, `safety_abort:${safety.abortReason}`);
 function clientFor(actor) {
   const client = createClient(supabaseUrl, anonKey, {
     auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false },
-    global: { headers: { Authorization: `Bearer ${actor.accessToken}`, "X-CircleBites-Load-Run": runId } },
+    global: { headers: { Authorization: `Bearer ${actor.accessToken}`, "X-Witoh-Load-Run": runId } },
     realtime: { params: { eventsPerSecond: 20 } }
   });
   client.realtime.setAuth(actor.accessToken);

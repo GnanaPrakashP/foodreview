@@ -20,12 +20,12 @@
       <data android:scheme="https"/>
     </intent>
   </queries>
-  <application android:name=".MainApplication" android:label="${circleBitesAppLabel}" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="false" android:theme="@style/AppTheme" android:supportsRtl="true" android:enableOnBackInvokedCallback="false" android:usesCleartextTraffic="${circleBitesUsesCleartextTraffic}" android:fullBackupContent="@xml/secure_store_backup_rules" android:dataExtractionRules="@xml/secure_store_data_extraction_rules" tools:replace="android:allowBackup,android:label">
-    <profileable android:shell="${circleBitesProfileableShell}" tools:targetApi="29"/>
-    <!-- These dependency-only components are not part of CircleBites runtime behavior. -->
+  <application android:name=".MainApplication" android:label="${witohAppLabel}" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="false" android:theme="@style/AppTheme" android:supportsRtl="true" android:enableOnBackInvokedCallback="false" android:usesCleartextTraffic="${witohUsesCleartextTraffic}" android:fullBackupContent="@xml/secure_store_backup_rules" android:dataExtractionRules="@xml/secure_store_data_extraction_rules" tools:replace="android:allowBackup,android:label">
+    <profileable android:shell="${witohProfileableShell}" tools:targetApi="29"/>
+    <!-- These dependency-only components are not part of Witoh runtime behavior. -->
     <activity android:name="com.canhub.cropper.CropImageActivity" tools:node="remove"/>
     <activity android:name="androidx.compose.ui.tooling.PreviewActivity" tools:node="remove"/>
-    <!-- CircleBites uses text clipboard APIs only; remove Expo's image-sharing provider. -->
+    <!-- Witoh uses text clipboard APIs only; remove Expo's image-sharing provider. -->
     <provider android:name="expo.modules.clipboard.ClipboardFileProvider" tools:node="remove"/>
     <meta-data android:name="expo.modules.updates.ENABLED" android:value="false"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH" android:value="ALWAYS"/>
@@ -39,7 +39,7 @@
         <action android:name="android.intent.action.VIEW"/>
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
-        <data android:scheme="${circleBitesAuthScheme}"/>
+        <data android:scheme="${witohAuthScheme}"/>
       </intent-filter>
     </activity>
   </application>

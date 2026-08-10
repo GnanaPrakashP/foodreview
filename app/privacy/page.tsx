@@ -15,7 +15,7 @@ export default function PrivacyPage() {
       <div style={{ display: "flex", flexDirection: "column", gap: "20px", fontSize: "14px", color: "var(--muted)", lineHeight: 1.7, fontFamily: "'DM Sans', sans-serif" }}>
         <section>
           <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>What we collect</h2>
-          <p>CircleBites processes account and profile details, email, posts, photos, short videos, dish and restaurant selections, optional location, Circle relationships, blocks and reports, private Memory participants, messages, media and voice notes, notification preferences, push tokens, and privacy-filtered operational diagnostics.</p>
+          <p>Witoh processes account and profile details, email, posts, photos, short videos, dish and restaurant selections, optional location, Circle relationships, blocks and reports, private Memory participants, messages, media and voice notes, notification preferences, push tokens, and privacy-filtered operational diagnostics.</p>
         </section>
         <section>
           <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>How we use it</h2>
@@ -39,7 +39,7 @@ export default function PrivacyPage() {
         </section>
         <section>
           <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Children and choices</h2>
-          <p>CircleBites is not intended for children under 13. You may deny optional permissions, change notifications, remove content, leave Memories, block accounts and request deletion.</p>
+          <p>Witoh is not intended for children under 13. You may deny optional permissions, change notifications, remove content, leave Memories, block accounts and request deletion.</p>
         </section>
         <section>
           <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: "15px", color: "var(--cream)", marginBottom: "8px" }}>Contact</h2>

@@ -31,7 +31,7 @@ function startNext(env) {
       API_RATE_LIMIT_HMAC_SECRET: RATE_SECRET,
       API_TRUSTED_PROXY_HOPS: "1",
       MOBILE_API_ALLOWED_ORIGINS: "https://admin.example.test",
-      MOBILE_AUTH_REDIRECT_BASE: "circlebites://",
+      MOBILE_AUTH_REDIRECT_BASE: "witoh://",
       MODERATION_OPERATOR_ID: "phase4-local-operator",
       MODERATION_OPERATOR_SECRET: OPERATOR_SECRET,
       NEXT_PUBLIC_SUPABASE_ANON_KEY: env.anonKey,
@@ -70,7 +70,7 @@ async function waitForNext() {
 function headers(extra = {}) {
   return {
     "Content-Type": "application/json",
-    "X-FoodReview-Install-Id": INSTALL_ID,
+    "X-Witoh-Install-Id": INSTALL_ID,
     "X-Forwarded-For": TEST_IP,
     ...extra,
   };

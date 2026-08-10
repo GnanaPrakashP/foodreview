@@ -1,4 +1,4 @@
-# FoodReview Production Hardening — Phase 4
+# Witoh Production Hardening — Phase 4
 
 Date: 2026-07-13
 
@@ -12,7 +12,7 @@ Release verification status: BLOCKED pending hosted multi-replica limiter verifi
 
 ## Executive result
 
-Phase 4 replaces FoodReview's inconsistent mobile/API trust boundaries with one server-verified actor, removes the public Auth-directory scan and account-existence response, adds an atomic PostgreSQL-backed multi-dimensional limiter, and covers every active mobile mutation with a centralized rate policy. Public feed personalization no longer accepts a viewer override. Provider, report, block, notification, push-token, media, and internal routes now have bounded work and explicit authority.
+Phase 4 replaces Witoh's inconsistent mobile/API trust boundaries with one server-verified actor, removes the public Auth-directory scan and account-existence response, adds an atomic PostgreSQL-backed multi-dimensional limiter, and covers every active mobile mutation with a centralized rate policy. Public feed personalization no longer accepts a viewer override. Provider, report, block, notification, push-token, media, and internal routes now have bounded work and explicit authority.
 
 Google OAuth state is cryptographic, expiring, environment-bound, and single-use. Email authentication is OTP-only in the product, and the later `202607160001` boundary migration removes password/recovery surfaces and rejects password token issuance through the hosted Auth hook. Push tokens are bound by trigger/RLS to Auth UUID plus installation. Generic media is pending-by-default and unclaimable/unpublishable until audited service approval; review/avatar images fail closed into quarantine when moderation is unavailable. Retired caller-selected moderation bypass routes return 410.
 

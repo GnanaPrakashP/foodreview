@@ -3,7 +3,7 @@ import { Image } from "expo-image";
 import { useIsFocused, useNavigation } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronDown, MapPin, Search, Star, Store, Utensils, Users, X } from "lucide-react-native";
+import { ArrowLeft, ChevronDown, Compass, MapPin, Search, Star, Store, Utensils, Users, X } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, BackHandler, Easing, Keyboard, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent } from "react-native";
 import { Tabs, type CollapsibleRef, type TabBarProps } from "react-native-collapsible-tab-view";
@@ -695,7 +695,9 @@ export default function ExploreScreen() {
           onPress={() => (showLocationMenu ? setShowLocationMenu(false) : openLocationMenu())}
           style={styles.locationButton}
         >
-          <Text style={styles.locationCompass}>🧭</Text>
+          <View style={styles.locationCompass}>
+            <Compass size={20} color={themeColors.mutedStrong} strokeWidth={1.8} />
+          </View>
           <Text numberOfLines={1} style={styles.locationText}>{locationLabel}</Text>
           <View style={{ transform: [{ rotate: showLocationMenu ? "180deg" : "0deg" }] }}>
             <ChevronDown size={14} color={themeColors.muted} strokeWidth={2.2} />
@@ -1348,7 +1350,9 @@ function RatingScore({ rating, ratingCount }: { rating: number | null; ratingCou
   const hasRating = rating !== null && rating > 0 && ratingCount > 0;
   return (
     <View style={[styles.ratingScore, !hasRating && styles.ratingScoreEmpty]}>
-      <Star size={10} color={hasRating ? themeColors.gold : themeColors.muted} fill={hasRating ? themeColors.gold : "transparent"} strokeWidth={hasRating ? 0 : 2} />
+      <View style={styles.ratingScoreIcon}>
+        <Star size={10} color={hasRating ? themeColors.gold : themeColors.muted} fill={hasRating ? themeColors.gold : "transparent"} strokeWidth={hasRating ? 0 : 2} />
+      </View>
       <Text style={[styles.ratingScoreText, !hasRating && styles.ratingScoreTextEmpty]}>{displayRating(rating)}</Text>
     </View>
   );
@@ -1702,8 +1706,10 @@ function createStyles(c: ThemeColors) {
       paddingVertical: Platform.OS === "web" ? 9 : 7
     },
     locationCompass: {
-      fontSize: Platform.OS === "web" ? 22 : 18,
-      lineHeight: Platform.OS === "web" ? 24 : 20
+      alignItems: "center",
+      height: 22,
+      justifyContent: "center",
+      width: 22
     },
     locationText: {
       ...fontStyles.extraBold,
@@ -2164,8 +2170,16 @@ function createStyles(c: ThemeColors) {
       borderWidth: 1,
       flexDirection: "row",
       gap: 3,
+      justifyContent: "center",
+      minHeight: 24,
       paddingHorizontal: 7,
-      paddingVertical: 4
+      paddingVertical: 0
+    },
+    ratingScoreIcon: {
+      alignItems: "center",
+      height: 14,
+      justifyContent: "center",
+      width: 10
     },
     ratingScoreEmpty: {
       backgroundColor: c.surface,
@@ -2175,7 +2189,9 @@ function createStyles(c: ThemeColors) {
       ...fontStyles.extraBold,
       color: c.gold,
       fontSize: 11,
-      lineHeight: 12
+      includeFontPadding: false,
+      lineHeight: 14,
+      textAlignVertical: "center"
     },
     ratingScoreTextEmpty: {
       color: c.muted,

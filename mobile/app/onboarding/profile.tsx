@@ -100,7 +100,7 @@ export default function ProfileOnboardingScreen() {
     if (signOut.isPending) return;
     Alert.alert(
       "Leave profile setup?",
-      "You’re signed in, but you need a profile before entering CircleBites.",
+      "You’re signed in, but you need a profile before entering Witoh.",
       [
         { text: "Continue setup", style: "cancel" },
         {
@@ -145,7 +145,7 @@ export default function ProfileOnboardingScreen() {
       <View style={styles.page}>
         <View style={styles.topBar}>
           <Pressable
-            accessibilityLabel="Sign out of CircleBites"
+            accessibilityLabel="Sign out of Witoh"
             accessibilityRole="button"
             disabled={signOut.isPending}
             hitSlop={8}
@@ -266,7 +266,7 @@ export default function ProfileOnboardingScreen() {
                 loading={setup.isPending}
                 onPress={submit}
               >
-                Continue to CircleBites
+                Continue to Witoh
               </AuthButton>
             </View>
           </View>

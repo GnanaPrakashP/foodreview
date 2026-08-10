@@ -1,8 +1,9 @@
 {
   "expo": {
-    "name": "CircleBites",
-    "slug": "circlebites-mobile",
-    "scheme": "circlebites",
+    "name": "Witoh",
+    "slug": "witoh-mobile",
+    "scheme": "witoh",
+    "icon": "./assets/witoh-logo.png",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
@@ -25,10 +26,10 @@
         "usesNonExemptEncryption": false
       },
       "infoPlist": {
-        "NSCameraUsageDescription": "CircleBites uses the camera when you choose to capture food photos or short videos.",
-        "NSMicrophoneUsageDescription": "CircleBites uses the microphone only when you choose to record a Memory voice message or capture video with sound.",
-        "NSPhotoLibraryUsageDescription": "CircleBites uses your photo library only when you choose media for a post or Memory.",
-        "NSLocationWhenInUseUsageDescription": "CircleBites uses your location to show nearby posts and restaurant discovery."
+        "NSCameraUsageDescription": "Witoh uses the camera when you choose to capture food photos or short videos.",
+        "NSMicrophoneUsageDescription": "Witoh uses the microphone only when you choose to record a Memory voice message or capture video with sound.",
+        "NSPhotoLibraryUsageDescription": "Witoh uses your photo library only when you choose media for a post or Memory.",
+        "NSLocationWhenInUseUsageDescription": "Witoh uses your location to show nearby posts and restaurant discovery."
       },
       "privacyManifests": {
         "NSPrivacyTracking": false,
@@ -54,6 +55,7 @@
     },
     "android": {
       "package": "com.circlebites.mobile",
+      "icon": "./assets/witoh-logo.png",
       "versionCode": 1,
       "allowBackup": false,
       "edgeToEdgeEnabled": false,
@@ -81,8 +83,8 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "CircleBites uses the camera when you choose to capture food photos or short videos.",
-          "microphonePermission": "CircleBites uses the microphone only when you choose to record a Memory voice message or capture video with sound."
+          "cameraPermission": "Witoh uses the camera when you choose to capture food photos or short videos.",
+          "microphonePermission": "Witoh uses the microphone only when you choose to record a Memory voice message or capture video with sound."
         }
       ],
       [
@@ -95,15 +97,15 @@
       [
         "expo-image-picker",
         {
-          "cameraPermission": "CircleBites uses the camera when you choose to capture food photos or short videos.",
-          "microphonePermission": "CircleBites uses the microphone only when you choose to record a Memory voice message or capture video with sound.",
-          "photosPermission": "CircleBites uses your photo library only when you choose media for a post or Memory."
+          "cameraPermission": "Witoh uses the camera when you choose to capture food photos or short videos.",
+          "microphonePermission": "Witoh uses the microphone only when you choose to record a Memory voice message or capture video with sound.",
+          "photosPermission": "Witoh uses your photo library only when you choose media for a post or Memory."
         }
       ],
       [
         "expo-media-library",
         {
-          "photosPermission": "CircleBites uses your photo library only when you open the recent-photo picker.",
+          "photosPermission": "Witoh uses your photo library only when you open the recent-photo picker.",
           "savePhotosPermission": false,
           "granularPermissions": [
             "photo"
@@ -113,7 +115,7 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "CircleBites uses your location to show nearby posts and restaurant discovery.",
+          "locationWhenInUsePermission": "Witoh uses your location to show nearby posts and restaurant discovery.",
           "locationAlwaysAndWhenInUsePermission": false,
           "locationAlwaysPermission": false,
           "isIosBackgroundLocationEnabled": false,
@@ -127,7 +129,7 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "CircleBites uses the microphone only when you choose to record a Memory voice message or capture video with sound."
+          "microphonePermission": "Witoh uses the microphone only when you choose to record a Memory voice message or capture video with sound."
         }
       ],
       "expo-video"

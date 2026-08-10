@@ -135,7 +135,7 @@ export function MediaPreviewScreen({
         <View style={[styles.postingState, { paddingBottom: bottomInset, paddingTop: topInset }]}>
           <Ionicons name="cloud-upload-outline" size={34} color={colors.dark.white} />
           <Text style={styles.postingTitle}>{navigating ? "Returning to room" : "Posting to room"}</Text>
-          <Text style={styles.postingText}>Keep CircleBites open while your memory uploads.</Text>
+          <Text style={styles.postingText}>Keep Witoh open while your memory uploads.</Text>
         </View>
       </View>
     );

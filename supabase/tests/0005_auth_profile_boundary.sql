@@ -46,7 +46,7 @@ select ok((select 'search_path=""' = any(proconfig) from pg_catalog.pg_proc wher
 select ok((select 'search_path=""' = any(proconfig) from pg_catalog.pg_proc where oid = 'public.is_profile_complete(uuid)'::regprocedure), 'completeness function has an empty search path');
 
 select ok(public.profile_username_is_valid('circle_bites7'), 'normalized username is valid');
-select ok(not public.profile_username_is_valid('CircleBites'), 'uppercase username is invalid');
+select ok(not public.profile_username_is_valid('Witoh'), 'uppercase username is invalid');
 select ok(public.profile_name_is_valid('Circle', 'Bites'), 'non-empty Name is valid');
 select ok(not public.profile_name_is_valid('   ', ''), 'blank Name is invalid');
 select is(

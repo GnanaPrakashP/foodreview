@@ -76,7 +76,7 @@ async function route(path, token, body, method = "POST", secret = null) {
     headers: {
       "Content-Type": "application/json",
       "Idempotency-Key": crypto.randomUUID(),
-      "X-FoodReview-Install-Id": INSTALL_ID,
+      "X-Witoh-Install-Id": INSTALL_ID,
       "X-Forwarded-For": TEST_IP,
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(secret ? { "x-account-deletion-secret": secret } : {})

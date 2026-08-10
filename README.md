@@ -18,7 +18,7 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 ## Local database
 
-FoodReview has one shared Supabase backend for web and mobile. Run all database commands from this repository root; `supabase/migrations` is the only executable history.
+Witoh has one shared Supabase backend for web and mobile. Run all database commands from this repository root; `supabase/migrations` is the only executable history.
 
 ```bash
 npm run db:start

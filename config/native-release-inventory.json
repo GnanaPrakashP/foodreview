@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "product": {
-    "name": "CircleBites",
+    "name": "Witoh",
     "androidApplicationId": "com.circlebites.mobile",
     "iosBundleIdentifier": "com.circlebites.mobile",
-    "deepLinkScheme": "circlebites",
+    "deepLinkScheme": "witoh",
     "webBaseUrl": "https://www.circlebites.in",
     "privacyUrl": "https://www.circlebites.in/privacy",
     "termsUrl": "https://www.circlebites.in/terms",
@@ -20,9 +20,9 @@
     "source": "EAS remote auto-increment for store builds; repository values are the minimum release floor"
   },
   "profiles": {
-    "development": { "environment": "development", "scheme": "circlebites-dev", "distribution": "internal" },
-    "preview": { "environment": "preview", "scheme": "circlebites-preview", "distribution": "internal" },
-    "production": { "environment": "production", "scheme": "circlebites", "distribution": "store" }
+    "development": { "environment": "development", "scheme": "witoh-dev", "distribution": "internal" },
+    "preview": { "environment": "preview", "scheme": "witoh-preview", "distribution": "internal" },
+    "production": { "environment": "production", "scheme": "witoh", "distribution": "store" }
   },
   "updates": {
     "enabled": false,

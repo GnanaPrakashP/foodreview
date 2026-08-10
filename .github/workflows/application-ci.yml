@@ -223,7 +223,7 @@ jobs:
           MEDIA_WORKER_SECRET: ci-placeholder-media-worker-secret
           API_RATE_LIMIT_HMAC_SECRET: ci-placeholder-rate-limit-hmac-material-0123456789
           API_TRUSTED_PROXY_HOPS: "1"
-          MOBILE_AUTH_REDIRECT_BASE: circlebites://
+          MOBILE_AUTH_REDIRECT_BASE: witoh://
           MODERATION_OPERATOR_SECRET: ci-placeholder-moderation-operator-material-0123456789
 
   mobile-export:

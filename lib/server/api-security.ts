@@ -47,7 +47,7 @@ export function mobileCorsHeaders(req: NextRequest, methods: string[]) {
   const origin = req.headers.get("origin")?.trim() ?? "";
   const headers: Record<string, string> = {
     ...SAFE_API_HEADERS,
-    "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key, X-FoodReview-Install-Id, X-Request-Id",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key, X-Witoh-Install-Id, X-FoodReview-Install-Id, X-Request-Id",
     "Access-Control-Allow-Methods": [...methods, "OPTIONS"].join(", "),
     "Vary": "Origin",
   };
@@ -68,7 +68,10 @@ export function requestCorrelation(req: NextRequest): ApiRequestContext {
   const cached = apiRequestContexts.get(req);
   if (cached) return cached;
   const supplied = safeCorrelationId(req.headers.get("x-request-id"));
-  const headerStart = Number(req.headers.get("x-foodreview-request-start-ms"));
+  const headerStart = Number(
+    req.headers.get("x-witoh-request-start-ms") ??
+    req.headers.get("x-foodreview-request-start-ms")
+  );
   const context = {
     requestId: supplied ?? randomUUID(),
     startedAt: Number.isFinite(headerStart) && headerStart > 0 && headerStart <= Date.now()
@@ -248,7 +251,10 @@ export function hashSecurityIdentifier(kind: string, value: string) {
 }
 
 export function requestInstallId(req: NextRequest) {
-  const value = req.headers.get("x-foodreview-install-id")?.trim() ?? "";
+  const value = (
+    req.headers.get("x-witoh-install-id") ??
+    req.headers.get("x-foodreview-install-id")
+  )?.trim() ?? "";
   return UUID_RE.test(value) ? value.toLowerCase() : null;
 }
 

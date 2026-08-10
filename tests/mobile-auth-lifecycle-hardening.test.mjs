@@ -134,7 +134,7 @@ test("only allowlisted protected deep links are retained after sign-in", () => {
   assert.equal(policy.safeProtectedPathFromLinkParts({
     hostname: "memories",
     path: "room-1",
-    scheme: "circlebites"
+    scheme: "witoh"
   }), "/memories/room-1");
   assert.equal(policy.safeProtectedPathFromLinkParts({
     hostname: "www.circlebites.in",
@@ -149,13 +149,13 @@ test("only allowlisted protected deep links are retained after sign-in", () => {
   assert.equal(policy.safeProtectedPathFromLinkParts({
     hostname: "reviews",
     path: "post-1",
-    scheme: "circlebites-preview"
+    scheme: "witoh-preview"
   }), null);
   assert.equal(policy.safeProtectedPathFromLinkParts({
     hostname: "reviews",
     path: "post-1",
-    scheme: "circlebites-preview"
-  }, { customScheme: "circlebites-preview" }), "/reviews/post-1");
+    scheme: "witoh-preview"
+  }, { customScheme: "witoh-preview" }), "/reviews/post-1");
 });
 
 test("protected runtime services and overlay hosts mount only for a validated full-profile session", () => {

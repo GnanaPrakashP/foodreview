@@ -65,7 +65,7 @@ export default async function JoinPage({
           marginBottom: "40px",
         }}
       >
-        CircleBites
+        Witoh
       </p>
 
       {/* Avatar */}
@@ -111,7 +111,7 @@ export default async function JoinPage({
         </p>
       ) : (
         <p style={{ fontSize: "14px", color: "var(--muted)", marginBottom: "36px", lineHeight: 1.5 }}>
-          Join CircleBites to see what your friends are eating.
+          Join Witoh to see what your friends are eating.
         </p>
       )}
 
@@ -160,7 +160,7 @@ export default async function JoinPage({
             cursor: "pointer",
           }}
         >
-          Join CircleBites →
+          Join Witoh →
         </button>
       </Link>
 

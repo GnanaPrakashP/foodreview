@@ -313,7 +313,7 @@ export default function MustTryChecklist({
     return (
       <EmptyState
         title="Choose an area first"
-        body="Set your location so CircleBites can build a nearby food bucket list."
+        body="Set your location so Witoh can build a nearby food bucket list."
         action={
           <button type="button" onClick={onChooseLocation} style={{ height: 36, padding: "0 14px", borderRadius: 9, border: "1px solid var(--border)", background: "var(--orange)", color: "white", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 850, cursor: "pointer" }}>
             Set location

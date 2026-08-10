@@ -12,7 +12,7 @@ const LAST_UPDATED = "Last updated: July 14, 2026";
 const sections = [
   {
     title: "What we collect",
-    body: "CircleBites processes account and profile details, email, posts, photos, short videos, dish and restaurant selections, optional location, Circle relationships, blocks and reports, private Memory participants/messages/media/voice notes, notification preferences and push tokens."
+    body: "Witoh processes account and profile details, email, posts, photos, short videos, dish and restaurant selections, optional location, Circle relationships, blocks and reports, private Memory participants/messages/media/voice notes, notification preferences and push tokens."
   },
   {
     title: "How we use it",
@@ -40,7 +40,7 @@ const sections = [
   },
   {
     title: "Children and your choices",
-    body: "CircleBites is not intended for children under 13. You may deny optional permissions, change notification settings, remove content, leave Memories, block accounts and request account deletion."
+    body: "Witoh is not intended for children under 13. You may deny optional permissions, change notification settings, remove content, leave Memories, block accounts and request account deletion."
   },
   {
     title: "Contact",

@@ -37,10 +37,10 @@ const productionEnvironment = {
 };
 
 test("canonical identity and monotonically managed release versions agree", () => {
-  assert.equal(appJson.name, "CircleBites");
+  assert.equal(appJson.name, "Witoh");
   assert.equal(appJson.android.package, "com.circlebites.mobile");
   assert.equal(appJson.ios.bundleIdentifier, "com.circlebites.mobile");
-  assert.equal(appJson.scheme, "circlebites");
+  assert.equal(appJson.scheme, "witoh");
   assert.equal(appJson.version, inventory.version.semanticVersion);
   assert.equal(appJson.android.versionCode, 1);
   assert.equal(appJson.ios.buildNumber, "1");
@@ -63,13 +63,13 @@ test("EAS profiles are separated by environment, scheme intent and distribution"
 test("environment-specific native identities prevent preview/production callback collision", () => {
   assert.deepEqual(appConfig.releaseIdentity("production"), {
     androidPackage: "com.circlebites.mobile",
-    displayName: "CircleBites",
+    displayName: "Witoh",
     iosBundleIdentifier: "com.circlebites.mobile",
-    scheme: "circlebites"
+    scheme: "witoh"
   });
-  assert.equal(appConfig.releaseIdentity("preview").scheme, "circlebites-preview");
-  assert.equal(appConfig.releaseIdentity("development").scheme, "circlebites-dev");
-  assert.equal(appConfig.releaseIdentity("local").scheme, "circlebites-dev");
+  assert.equal(appConfig.releaseIdentity("preview").scheme, "witoh-preview");
+  assert.equal(appConfig.releaseIdentity("development").scheme, "witoh-dev");
+  assert.equal(appConfig.releaseIdentity("local").scheme, "witoh-dev");
 });
 
 test("production environment accepts complete public configuration", () => {
@@ -118,12 +118,12 @@ test("production environment rejects privileged public Supabase names without ex
 test("Android source manifest and Gradle release fail closed", () => {
   const manifest = read("mobile/android/app/src/main/AndroidManifest.xml");
   const gradle = read("mobile/android/app/build.gradle");
-  assert.match(manifest, /android:usesCleartextTraffic="\$\{circleBitesUsesCleartextTraffic\}"/);
+  assert.match(manifest, /android:usesCleartextTraffic="\$\{witohUsesCleartextTraffic\}"/);
   assert.match(gradle, /allowLocalCleartext = appEnvironment in \["local", "development"\]/);
-  assert.match(gradle, /circleBitesUsesCleartextTraffic: allowLocalCleartext\.toString\(\)/);
-  assert.match(manifest, /<profileable android:shell="\$\{circleBitesProfileableShell\}"/);
+  assert.match(gradle, /witohUsesCleartextTraffic: allowLocalCleartext\.toString\(\)/);
+  assert.match(manifest, /<profileable android:shell="\$\{witohProfileableShell\}"/);
   assert.match(gradle, /allowShellProfiling = appEnvironment != "production"/);
-  assert.match(gradle, /circleBitesProfileableShell: allowShellProfiling\.toString\(\)/);
+  assert.match(gradle, /witohProfileableShell: allowShellProfiling\.toString\(\)/);
   assert.match(manifest, /android:allowBackup="false"/);
   for (const permission of inventory.androidPermissions.blocked) {
     assert.match(manifest, new RegExp(`android:name="${permission.replaceAll(".", "\\.")}"[^>]*tools:node="remove"`));
@@ -139,8 +139,8 @@ test("Android source manifest and Gradle release fail closed", () => {
   assert.match(gradle, /Injected release signing configuration is incomplete/);
   assert.doesNotMatch(gradle, /EAS_BUILD[^\n]*(?:sign|credential)|(?:sign|credential)[^\n]*EAS_BUILD/i);
   assert.match(gradle, /com\.circlebites\.mobile\.preview/);
-  assert.match(gradle, /circlebites-preview/);
-  assert.match(manifest, /android:scheme="\$\{circleBitesAuthScheme\}"/);
+  assert.match(gradle, /witoh-preview/);
+  assert.match(manifest, /android:scheme="\$\{witohAuthScheme\}"/);
   for (const removedComponent of ["com.canhub.cropper.CropImageActivity", "androidx.compose.ui.tooling.PreviewActivity", "expo.modules.clipboard.ClipboardFileProvider"]) {
     assert.match(manifest, new RegExp(`${removedComponent}[\\s\\S]*?tools:node="remove"`));
   }
@@ -272,7 +272,7 @@ test("web/mobile policy identities and material disclosures are reconciled", () 
     read("mobile/src/components/posts/PostCard.tsx"), read("mobile/src/utils/reporting.ts")
   ];
   for (const source of sources) {
-    assert.match(source, /CircleBites/);
+    assert.match(source, /Witoh/);
     assert.doesNotMatch(source, /foodcircle\.app|circlebites\.app/i);
   }
   assert.match(sources[0], /Supabase/);

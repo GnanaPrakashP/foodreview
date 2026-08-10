@@ -181,10 +181,10 @@ function notificationPayload(notification: NotificationRow, token: string) {
   if (notification.entity_id) data.entityId = notification.entity_id;
   if (notification.post_id) data.postId = notification.post_id;
   return {
-    body: notification.message || "You have a new CircleBites notification",
+    body: notification.message || "You have a new Witoh notification",
     data,
     sound: "default",
-    title: notification.title || "CircleBites",
+    title: notification.title || "Witoh",
     to: token
   };
 }

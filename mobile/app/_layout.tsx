@@ -10,7 +10,7 @@ import { AppProviders } from "@/providers/AppProviders";
 import { AuthGate } from "@/providers/AuthGate";
 import { useThemePreference } from "@/hooks/useThemePreference";
 import { useSessionStore } from "@/stores/sessionStore";
-import { useCircleBitesFonts } from "@/theme";
+import { useWitohFonts } from "@/theme";
 import { wrapRootLayout } from "@/observability/mobileTelemetry";
 import { isProfileComplete } from "@/utils/profileCompleteness";
 
@@ -35,7 +35,7 @@ function AuthenticatedSurfaceHosts() {
 }
 
 function RootLayout() {
-  const [fontsLoaded] = useCircleBitesFonts();
+  const [fontsLoaded] = useWitohFonts();
   const { resolvedTheme, themeColors } = useThemePreference();
   const navigationTheme = useMemo<Theme>(() => {
     const baseTheme = resolvedTheme === "light" ? DefaultTheme : DarkTheme;

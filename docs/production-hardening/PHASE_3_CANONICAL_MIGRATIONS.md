@@ -1,4 +1,4 @@
-# FoodReview Production Hardening — Phase 3
+# Witoh Production Hardening — Phase 3
 
 Date: 2026-07-13
 
@@ -12,7 +12,7 @@ Release verification status: BLOCKED pending hosted migration-history/schema ins
 
 ## Result
 
-FoodReview now has one executable Supabase history: `supabase/migrations`. The former mobile project configuration is removed, its unique migrations are represented once in the canonical chronology, duplicate/conflicting evidence is locked, and CI rejects any return to a second migration authority.
+Witoh now has one executable Supabase history: `supabase/migrations`. The former mobile project configuration is removed, its unique migrations are represented once in the canonical chronology, duplicate/conflicting evidence is locked, and CI rejects any return to a second migration authority.
 
 The pre-merge inventory was 29 root files and 49 mobile files: 16 byte-identical versions, 11 root-only versions, 31 mobile-only versions, and two same-version/different-byte conflicts. Both conflicts were comment-only differences with executable-SQL equivalence. Root was selected using backend ownership, the root CLI configuration, dependency completeness, prior reset evidence, and Phase 1A–2 ownership. No pre-Phase-3 migration was edited or renumbered.
 

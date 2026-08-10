@@ -7,7 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const APP_ID = "com.circlebites.mobile.dev";
-const SCHEME = "circlebites-dev";
+const SCHEME = "witoh-dev";
 const DEFAULT_PORT = 8081;
 const DEFAULT_HOST = "127.0.0.1";
 const METRO_START_TIMEOUT_MS = 60_000;
@@ -103,7 +103,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`Rebuild, reinstall, and launch CircleBites on a connected Android phone.
+  console.log(`Rebuild, reinstall, and launch Witoh on a connected Android phone.
 
 Usage:
   npm run android:reinstall:phone
@@ -463,7 +463,7 @@ async function waitForApi(url, timeoutMs = API_START_TIMEOUT_MS) {
 
 function startApiServer(url) {
   const port = apiPort(url);
-  const logPath = join(tmpdir(), `circlebites-next-api-${port}.log`);
+  const logPath = join(tmpdir(), `witoh-next-api-${port}.log`);
   const out = openSync(logPath, "a");
   const err = openSync(logPath, "a");
   const child = spawn("npm", ["run", "dev", "--", "-H", url.hostname, "-p", String(port)], {
@@ -506,7 +506,7 @@ async function ensureApiServer(url, shouldStart) {
     return true;
   }
 
-  throw new Error(`Next API did not become reachable at ${url.origin}. Check /tmp/circlebites-next-api-${apiPort(url)}.log and retry.`);
+  throw new Error(`Next API did not become reachable at ${url.origin}. Check /tmp/witoh-next-api-${apiPort(url)}.log and retry.`);
 }
 
 async function stopMetroOnPort(port) {
@@ -550,7 +550,7 @@ function startMetro(host, port) {
     String(port),
     "--clear"
   ];
-  const logPath = join(tmpdir(), `circlebites-metro-${port}.log`);
+  const logPath = join(tmpdir(), `witoh-metro-${port}.log`);
   const out = openSync(logPath, "a");
   const err = openSync(logPath, "a");
   const child = spawn(command, expoArgs, {
@@ -578,7 +578,7 @@ async function ensureMetro(host, port, shouldStart, shouldRestart) {
         console.log(`Metro is ready at http://${host}:${port}`);
         return;
       }
-      throw new Error(`Metro did not become reachable at http://${host}:${port}. Check /tmp/circlebites-metro-${port}.log and retry.`);
+      throw new Error(`Metro did not become reachable at http://${host}:${port}. Check /tmp/witoh-metro-${port}.log and retry.`);
     }
     console.log(`Metro is reachable at http://${host}:${port}`);
     return;
@@ -595,7 +595,7 @@ async function ensureMetro(host, port, shouldStart, shouldRestart) {
     return;
   }
 
-  throw new Error(`Metro did not become reachable at http://${host}:${port}. Check /tmp/circlebites-metro-${port}.log and retry.`);
+  throw new Error(`Metro did not become reachable at http://${host}:${port}. Check /tmp/witoh-metro-${port}.log and retry.`);
 }
 
 function devClientUrl(host, port) {
@@ -611,7 +611,7 @@ async function main() {
   const host = options.host || defaultHost();
   const mobileApiUrl = apiBaseUrl();
   const mobileSupabaseUrl = supabaseBaseUrl();
-  if (process.env.CIRCLEBITES_LOCAL_DEVICE === "1") {
+  if (process.env.WITOH_LOCAL_DEVICE === "1") {
     if (!mobileApiUrl || !isLoopbackApiUrl(mobileApiUrl) || !mobileSupabaseUrl || !isLoopbackApiUrl(mobileSupabaseUrl)) {
       throw new Error("Dedicated Android local-device mode requires loopback API and Supabase URLs");
     }
@@ -673,7 +673,7 @@ async function main() {
     if (mobileSupabaseUrl && isLoopbackApiUrl(mobileSupabaseUrl)) {
       run(adb, ["-s", device, "reverse", `tcp:${apiPort(mobileSupabaseUrl)}`, `tcp:${apiPort(mobileSupabaseUrl)}`]);
       console.log(`adb reverse configured for local Supabase port ${apiPort(mobileSupabaseUrl)}.`);
-    } else if (process.env.CIRCLEBITES_LOCAL_DEVICE === "1") {
+    } else if (process.env.WITOH_LOCAL_DEVICE === "1") {
       throw new Error("Dedicated Android local-device mode could not reverse the local Supabase URL");
     }
     run(adb, ["-s", device, "shell", "am", "force-stop", APP_ID]);

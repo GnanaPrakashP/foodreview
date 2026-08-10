@@ -1,6 +1,6 @@
 # Mobile Design Rules
 
-These rules translate the existing CircleBites web visual system into a native mobile app. Do not copy CSS or web layout directly.
+These rules translate the existing Witoh web visual system into a native mobile app. Do not copy CSS or web layout directly.
 
 ## Visual Identity
 

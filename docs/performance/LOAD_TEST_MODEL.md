@@ -1,4 +1,4 @@
-# CircleBites load-test model
+# Witoh load-test model
 
 The machine-readable authority is `config/load-capacity.json`. This model describes the initial launch profile; it does not assert that the profile has passed.
 

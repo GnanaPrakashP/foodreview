@@ -94,7 +94,7 @@ async function apiRequest(group, actor, path, options = {}) {
   return timedRequest(metrics, group, `${apiBase}${path}`, {
     ...options,
     headers: actorHeaders(actor, {
-      "X-CircleBites-Load-Run": runId,
+      "X-Witoh-Load-Run": runId,
       ...options.headers
     })
   });
@@ -130,7 +130,7 @@ async function authScenario(actor, random) {
   if (random() < 0.02) {
     await actorRequest("auth-invalid", actor, `${apiBase}/api/mobile/auth/account-status`, {
       expectedStatuses: [401],
-      headers: { Authorization: "Bearer invalid-load-token", "X-CircleBites-Load-Run": runId }
+      headers: { Authorization: "Bearer invalid-load-token", "X-Witoh-Load-Run": runId }
     });
   }
   if (frozenActor && random() < 0.02) {
@@ -161,7 +161,7 @@ async function circleScenario(actor) {
 async function exploreScenario(actor) {
   await actorRequest("explore-rpc", actor, `${supabaseBase}/rest/v1/rpc/explore_discovery_canonical_v3`, {
     body: JSON.stringify({ p_lat: 12.9716, p_lng: 77.5946, p_limit: 24 }),
-    headers: { apikey: anonKey, Authorization: `Bearer ${actor.accessToken}`, "Content-Type": "application/json", "X-CircleBites-Load-Run": runId },
+    headers: { apikey: anonKey, Authorization: `Bearer ${actor.accessToken}`, "Content-Type": "application/json", "X-Witoh-Load-Run": runId },
     method: "POST"
   });
 }
@@ -177,12 +177,12 @@ async function profileScenario(actor) {
   await apiRequest("profile-posts", actor, `/api/mobile/feed?scope=profile&profileName=${encodeURIComponent(actor.username)}&limit=24`);
   if (actor.otherUsername) {
     await actorRequest("other-profile", actor, `${supabaseBase}/rest/v1/profiles?username=eq.${encodeURIComponent(actor.otherUsername)}&select=id,username,first_name,last_name,account_type,bio&limit=1`, {
-      headers: { apikey: anonKey, Authorization: `Bearer ${actor.accessToken}`, "X-CircleBites-Load-Run": runId }
+      headers: { apikey: anonKey, Authorization: `Bearer ${actor.accessToken}`, "X-Witoh-Load-Run": runId }
     });
     await apiRequest("other-profile-posts", actor, `/api/mobile/feed?scope=profile&profileName=${encodeURIComponent(actor.otherUsername)}&limit=24`);
     await actorRequest("other-profile-stats", actor, `${supabaseBase}/rest/v1/rpc/profile_post_stats`, {
       body: JSON.stringify({ p_username: actor.otherUsername }),
-      headers: { apikey: anonKey, Authorization: `Bearer ${actor.accessToken}`, "Content-Type": "application/json", "X-CircleBites-Load-Run": runId },
+      headers: { apikey: anonKey, Authorization: `Bearer ${actor.accessToken}`, "Content-Type": "application/json", "X-Witoh-Load-Run": runId },
       method: "POST"
     });
   }
@@ -351,7 +351,7 @@ async function runArrival() {
 }
 
 const health = await timedRequest(metrics, "release-health", `${apiBase}/api/health`, {
-  headers: { "X-CircleBites-Load-Run": runId }
+  headers: { "X-Witoh-Load-Run": runId }
 });
 if (health.payload?.release && health.payload.release !== target.apiRelease) metrics.violation("api_release_mismatch");
 await checkSafetyAbort(true);

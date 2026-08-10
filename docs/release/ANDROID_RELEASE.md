@@ -10,7 +10,7 @@ The launcher activity is the only unpermissioned exported component and uses `si
 
 ## Signing and artifacts
 
-Release Gradle never references `signingConfigs.debug`. It accepts a complete `CIRCLEBITES_RELEASE_*` credential set or Android injected signing properties; a release APK/AAB task otherwise fails. For local validation, use a disposable non-debug keystore outside Git. It proves the build/signature path but is not the production upload key.
+Release Gradle never references `signingConfigs.debug`. It accepts a complete `WITOH_RELEASE_*` credential set or Android injected signing properties; a release APK/AAB task otherwise fails. For local validation, use a disposable non-debug keystore outside Git. It proves the build/signature path but is not the production upload key.
 
 The production upload key must be held by the release owner in the protected CI/EAS credential store. Google Play App Signing owns the app-signing key; retain offline recovery/rotation documentation for the upload key. Never commit `.jks`, passwords or certificate exports.
 

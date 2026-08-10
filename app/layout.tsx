@@ -6,7 +6,7 @@ import ScrollRestoration from "@/components/navigation/ScrollRestoration";
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://circlebites.in"),
-  title: "CircleBites",
+  title: "Witoh",
   description: "Your personal food recommendation layer",
 };
 

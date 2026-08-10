@@ -11,12 +11,12 @@ const LAST_UPDATED = "Last updated: July 14, 2026";
 
 const sections = [
   {
-    title: "Using CircleBites",
-    body: "CircleBites lets people share food reviews and private Memories. You must be at least 13 and legally able to use the service. Keep your account secure and provide accurate registration information."
+    title: "Using Witoh",
+    body: "Witoh lets people share food reviews and private Memories. You must be at least 13 and legally able to use the service. Keep your account secure and provide accurate registration information."
   },
   {
     title: "Your content",
-    body: "You retain rights you have in your content. You grant CircleBites a limited licence to host, process, reproduce and display it only as needed to operate, secure and improve the service according to the visibility you select. You must have permission to upload the content."
+    body: "You retain rights you have in your content. You grant Witoh a limited licence to host, process, reproduce and display it only as needed to operate, secure and improve the service according to the visibility you select. You must have permission to upload the content."
   },
   {
     title: "Acceptable use",
@@ -32,7 +32,7 @@ const sections = [
   },
   {
     title: "Ending use",
-    body: "You may stop using CircleBites or request account deletion in Settings. We may suspend access for serious or repeated violations. Content removal, operational retention and backup expiry follow the Privacy Policy."
+    body: "You may stop using Witoh or request account deletion in Settings. We may suspend access for serious or repeated violations. Content removal, operational retention and backup expiry follow the Privacy Policy."
   },
   {
     title: "Copyright and complaints",

@@ -608,11 +608,11 @@ async function fetchMediaDerivativeUrls(assetIds: string[]) {
 }
 
 function reviewPrimaryMediaCandidates(row: ExplorePhotoReviewRow, derivativeUrls: Map<string, string>) {
-  const gallery = (row.review_photos ?? [])
+  const gallery = [...(row.review_photos ?? [])]
     .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+    .filter((media) => media.media_type !== "video")
     .map((media) => {
       const assetDerivative = media.media_asset_id ? derivativeUrls.get(media.media_asset_id) : null;
-      if (media.media_type === "video") return assetDerivative ?? null;
       return explorePhotoUrl(media.public_url) ?? assetDerivative ?? null;
     })
     .filter((url): url is string => Boolean(url));
@@ -919,7 +919,9 @@ async function getExploreDiscoveryFromRpc(
 
 export async function getExploreDiscovery(input: ExploreFeedInput = {}): Promise<ExploreDiscoveryPage> {
   try {
-    return await getExploreDiscoveryFromRpc(input, CANONICAL_EXPLORE_DISCOVERY_RPC);
+    return await filterDiscoveryMedia(
+      await getExploreDiscoveryFromRpc(input, CANONICAL_EXPLORE_DISCOVERY_RPC)
+    );
   } catch (error) {
     const detail = error instanceof Error ? error.message : "unknown database error";
     throw new Error(`Explore deployment contract unavailable (${CANONICAL_EXPLORE_DISCOVERY_RPC}): ${detail}`);

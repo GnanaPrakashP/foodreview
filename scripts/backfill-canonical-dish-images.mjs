@@ -3,7 +3,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 const COMMONS_API_URL = "https://commons.wikimedia.org/w/api.php";
-const USER_AGENT = "CircleBitesDishImageBackfill/0.1 (canonical dish image curation)";
+const USER_AGENT = "WitohDishImageBackfill/0.1 (canonical dish image curation)";
 
 function readNumberArg(argv, index, name) {
   const value = argv[index + 1];

@@ -82,10 +82,10 @@ Create:
 
 Deep link targets:
 
-- `circlebites://reviews/:id`
-- `circlebites://people/:username`
-- `circlebites://restaurants/:placeId`
-- `circlebites://dishes/:dish`
+- `witoh://reviews/:id`
+- `witoh://people/:username`
+- `witoh://restaurants/:placeId`
+- `witoh://dishes/:dish`
 
 ## Phase 5: Screens In Build Order
 

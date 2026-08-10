@@ -1,4 +1,4 @@
-# FoodReview database migrations
+# Witoh database migrations
 
 ## Authority
 

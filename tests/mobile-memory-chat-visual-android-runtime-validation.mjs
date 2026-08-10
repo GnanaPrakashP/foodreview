@@ -522,7 +522,7 @@ function buildInstrumentedAndroid(env) {
   run("./gradlew", [
     "app:clean",
     "app:assembleDebug",
-    "-PcircleBitesBundleDebugJs=true"
+    "-PwitohBundleDebugJs=true"
   ], { cwd: `${root}mobile/android`, env: buildEnv });
 }
 
@@ -536,7 +536,7 @@ function buildAnchorReleaseAndroid(env) {
       "-keyalg", "RSA",
       "-keysize", "2048",
       "-validity", "2",
-      "-dname", "CN=CircleBites Memory Anchor Validation",
+      "-dname", "CN=Witoh Memory Anchor Validation",
       "-keystore", keyStore,
       "-storepass", "memoryanchor",
       "-keypass", "memoryanchor",
@@ -1089,7 +1089,7 @@ async function assertDoubleTapStayedInTextMode() {
   const xml = await uiXml();
   const enteredVoice =
     pointFor(xml, ["Cancel audio message"]) ||
-    pointFor(xml, ["Allow CircleBites Dev to record audio?"]);
+    pointFor(xml, ["Allow Witoh Dev to record audio?"]);
   assert.equal(enteredVoice, null, "double tap transitioned the send control into voice");
   assert.ok(pointFor(xml, ["Type a message"]), "text composer disappeared after double tap");
 }
@@ -1801,7 +1801,7 @@ async function main() {
       EXPO_PUBLIC_API_BASE_URL: apiBaseUrl,
       ...(anchorScenario ? {} : {
         ANDROID_APP_LAUNCH_URL:
-          `circlebites-dev://expo-development-client/?url=${encodeURIComponent(metroBaseUrl)}`
+          `witoh-dev://expo-development-client/?url=${encodeURIComponent(metroBaseUrl)}`
       })
     }
   });

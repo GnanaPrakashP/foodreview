@@ -18,7 +18,7 @@ export default function HelpContactScreen() {
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
 
   async function contactSupport() {
-    const url = `mailto:${supportEmail}?subject=${encodeURIComponent("CircleBites support")}`;
+    const url = `mailto:${supportEmail}?subject=${encodeURIComponent("Witoh support")}`;
     const canOpen = await Linking.canOpenURL(url);
     if (!canOpen) {
       notify("Email unavailable", `Contact us at ${supportEmail}.`);

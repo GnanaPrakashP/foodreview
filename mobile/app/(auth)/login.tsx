@@ -302,7 +302,7 @@ function TermsBlock({ styles }: { styles: AuthStyles }) {
     <Text style={styles.termsText}>
       By continuing, you agree to the{" "}
       <Text
-        accessibilityHint="Opens the CircleBites Terms of Service"
+        accessibilityHint="Opens the Witoh Terms of Service"
         accessibilityRole="link"
         onPress={() => openDocument("terms")}
         style={styles.termsLink}
@@ -311,7 +311,7 @@ function TermsBlock({ styles }: { styles: AuthStyles }) {
       </Text>
       {"\n"}and acknowledge the{" "}
       <Text
-        accessibilityHint="Opens the CircleBites Privacy Policy"
+        accessibilityHint="Opens the Witoh Privacy Policy"
         accessibilityRole="link"
         onPress={() => openDocument("privacy")}
         style={styles.termsLink}

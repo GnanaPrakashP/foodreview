@@ -72,7 +72,7 @@ function adminFor(jobs, failStatus = "retry_wait") {
         select() {
           return { eq(_key, value) {
             const id = String(value).replace("notification-", "");
-            return { maybeSingle: async () => ({ data: { actor_name: null, entity_id: null, entity_type: "SYSTEM", id: value, message: "safe fixture", post_id: null, recipient_name: "fixture", recipient_user_id: `user-${id}`, title: "CircleBites", type: "social" }, error: null }) };
+            return { maybeSingle: async () => ({ data: { actor_name: null, entity_id: null, entity_type: "SYSTEM", id: value, message: "safe fixture", post_id: null, recipient_name: "fixture", recipient_user_id: `user-${id}`, title: "Witoh", type: "social" }, error: null }) };
           } };
         }
       };

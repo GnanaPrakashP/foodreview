@@ -1,6 +1,6 @@
 # Production observability
 
-FoodReview uses three bounded signal layers: Sentry for application crashes/errors/traces, structured JSON logs for searchable operational events, and service-role-only database health functions for durable queue, scheduler, and database state. The database is the source of truth for jobs; telemetry loss never changes a job outcome.
+Witoh uses three bounded signal layers: Sentry for application crashes/errors/traces, structured JSON logs for searchable operational events, and service-role-only database health functions for durable queue, scheduler, and database state. The database is the source of truth for jobs; telemetry loss never changes a job outcome.
 
 ## Services and release identity
 

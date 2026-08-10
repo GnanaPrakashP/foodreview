@@ -54,18 +54,18 @@ await Promise.all(actors.map(async (actor) => {
   const freezeStarted = Date.now();
   const requested = await timedRequest(metrics, "deletion-request", `${apiBase}/api/delete-account`, {
     expectedStatuses: [202],
-    headers: actorHeaders(actor, { "X-CircleBites-Load-Run": runId }),
+    headers: actorHeaders(actor, { "X-Witoh-Load-Run": runId }),
     method: "POST"
   });
   if (requested.payload?.jobId) jobIds.push(requested.payload.jobId);
   const status = await timedRequest(metrics, "deletion-freeze-status", `${apiBase}/api/mobile/auth/account-status`, {
-    headers: actorHeaders(actor, { "X-CircleBites-Load-Run": runId })
+    headers: actorHeaders(actor, { "X-Witoh-Load-Run": runId })
   });
   if (status.payload?.status === "deleting") freezeDurations.push(Date.now() - freezeStarted);
   await timedRequest(metrics, "deletion-write-denial", `${apiBase}/api/likes`, {
     body: JSON.stringify({ postId: actor.engagementPostIds[0] }),
     expectedStatuses: [401, 409],
-    headers: actorHeaders(actor, { "X-CircleBites-Load-Run": runId }),
+    headers: actorHeaders(actor, { "X-Witoh-Load-Run": runId }),
     method: "POST"
   });
 }));

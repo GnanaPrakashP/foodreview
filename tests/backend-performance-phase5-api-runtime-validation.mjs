@@ -334,7 +334,7 @@ try {
   const signed = await client.auth.verifyOtp({ token_hash: link.data.properties.hashed_token, type: "magiclink" });
   if (signed.error || !signed.data.session) throw signed.error ?? new Error("Viewer sign-in failed");
   const token = signed.data.session.access_token;
-  const headers = { Authorization: `Bearer ${token}`, "X-FoodReview-Install-Id": `phase5-${suffix}` };
+  const headers = { Authorization: `Bearer ${token}`, "X-Witoh-Install-Id": `phase5-${suffix}` };
 
   startNext(env);
   await waitForNext();

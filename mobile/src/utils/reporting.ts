@@ -18,7 +18,7 @@ export function chooseReportReason(targetLabel: string): Promise<ReportReason | 
         {
           cancelButtonIndex: options.length - 1,
           destructiveButtonIndex: 0,
-          message: "This sends the item to CircleBites moderation.",
+          message: "This sends the item to Witoh moderation.",
           options,
           title: "Report " + targetLabel
         },
@@ -32,7 +32,7 @@ export function chooseReportReason(targetLabel: string): Promise<ReportReason | 
 
   return confirmAction({
     title: "Report " + targetLabel + "?",
-    message: "This sends the item to CircleBites moderation for review.",
+    message: "This sends the item to Witoh moderation for review.",
     confirmLabel: "Report",
     destructive: true
   }).then((confirmed) => (confirmed ? "other" : null));

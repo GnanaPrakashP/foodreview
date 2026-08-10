@@ -68,7 +68,7 @@ invariant(!safety.abortReason, `safety_abort:${safety.abortReason}`);
 async function apiRequest(group, actor, path, options = {}) {
   return timedRequest(metrics, group, `${apiBase}${path}`, {
     ...options,
-    headers: actorHeaders(actor, { "X-CircleBites-Load-Run": runId, ...options.headers })
+    headers: actorHeaders(actor, { "X-Witoh-Load-Run": runId, ...options.headers })
   });
 }
 
@@ -121,7 +121,7 @@ async function uploadOne(actor, index) {
         apikey: anonKey,
         Authorization: `Bearer ${memoryActor.accessToken}`,
         "Content-Type": media.mimeType,
-        "X-CircleBites-Load-Run": runId,
+        "X-Witoh-Load-Run": runId,
         "x-upsert": "false"
       },
       method: "POST",
@@ -177,7 +177,7 @@ async function uploadOne(actor, index) {
       apikey: anonKey,
       Authorization: `Bearer ${actor.accessToken}`,
       "Content-Type": media.mimeType,
-      "X-CircleBites-Load-Run": runId,
+      "X-Witoh-Load-Run": runId,
       "x-upsert": "false"
     },
     method: "POST",
@@ -222,7 +222,7 @@ async function uploadAvatar(actor, index) {
       apikey: anonKey,
       Authorization: `Bearer ${actor.accessToken}`,
       "Content-Type": "image/jpeg",
-      "X-CircleBites-Load-Run": runId,
+      "X-Witoh-Load-Run": runId,
       "x-upsert": "false"
     },
     method: "POST",

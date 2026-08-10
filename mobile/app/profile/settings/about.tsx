@@ -34,7 +34,7 @@ export default function AboutScreen() {
       title="About"
     >
       <View style={styles.brandCard}>
-        <Text style={styles.brandName}>CircleBites</Text>
+        <Text style={styles.brandName}>Witoh</Text>
         <Text style={styles.brandTagline}>A private food journal for you and your circle.</Text>
         <Text style={styles.version}>Version {appVersion()}</Text>
       </View>
@@ -45,7 +45,7 @@ export default function AboutScreen() {
         <LinkRow styles={styles} themeColors={themeColors} Icon={FileText} label="Terms of Service" onPress={() => router.push("/profile/settings/terms")} />
       </View>
 
-      <Text style={styles.copyright}>© {new Date().getFullYear()} CircleBites</Text>
+      <Text style={styles.copyright}>© {new Date().getFullYear()} Witoh</Text>
     </ProfileSubScreen>
   );
 }

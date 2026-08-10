@@ -54,7 +54,7 @@ export default function LoginPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-FoodReview-Install-Id": browserInstallId()
+          "X-Witoh-Install-Id": browserInstallId()
         },
         body: JSON.stringify({ email: normalized })
       });
@@ -105,7 +105,7 @@ export default function LoginPage() {
   return (
     <main style={styles.shell}>
       <section style={styles.panel} aria-labelledby="login-heading">
-        <div style={styles.brand}>CircleBites</div>
+        <div style={styles.brand}>Witoh</div>
         <div style={styles.rule} />
 
         {stage === "email" ? (

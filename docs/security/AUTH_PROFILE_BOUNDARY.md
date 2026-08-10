@@ -1,4 +1,4 @@
-# CircleBites authentication and profile authorization boundary
+# Witoh authentication and profile authorization boundary
 
 Date: 2026-07-16
 
@@ -11,13 +11,13 @@ The checked-in implementation is ready for a production-like staging rollout, no
 - The only product entry points are Google OAuth and a six-digit email OTP.
 - The OTP request API always returns the same accepted response and never looks up an account first.
 - Supabase Auth owns the session. The application never stores passwords.
-- A valid session is not sufficient to enter CircleBites. The server calls `public.is_profile_complete(auth_user_id)` and returns `active`, `incomplete`, `missing`, or `deleting`.
-- `active` enters CircleBites. `incomplete` or `missing` remains authenticated in onboarding. `deleting` and invalid/unavailable identity resolution fail closed.
+- A valid session is not sufficient to enter Witoh. The server calls `public.is_profile_complete(auth_user_id)` and returns `active`, `incomplete`, `missing`, or `deleting`.
+- `active` enters Witoh. `incomplete` or `missing` remains authenticated in onboarding. `deleting` and invalid/unavailable identity resolution fail closed.
 - Closing, force-stopping, rebooting, or ordinarily updating the app restores the Supabase session and repeats the same completeness decision. Logout clears the account-owned local boundary before the signed-out tree mounts.
 - Successful onboarding replaces the onboarding tree with the protected tree. There is no Skip path.
 - A `PASSWORD_RECOVERY` event is logged out before protected state or an account-owned cache can mount.
 
-Supabase automatically links Google and email identities that present the same verified unique email. CircleBites does not implement caller-selected or silent manual linking. Before release, verify same-email Google→OTP and OTP→Google journeys in the hosted project and confirm one Auth UUID, one profile row, and the expected identities array. Reference: <https://supabase.com/docs/guides/auth/auth-identity-linking>.
+Supabase automatically links Google and email identities that present the same verified unique email. Witoh does not implement caller-selected or silent manual linking. Before release, verify same-email Google→OTP and OTP→Google journeys in the hosted project and confirm one Auth UUID, one profile row, and the expected identities array. Reference: <https://supabase.com/docs/guides/auth/auth-identity-linking>.
 
 ## Authoritative profile model
 
@@ -53,7 +53,7 @@ The mutation RPCs are `SECURITY DEFINER`, have an empty `search_path`, derive ow
 
 Supabase's email provider supports both OTP and password endpoints, so removing UI alone is insufficient. Migration `202607160001_auth_profile_boundary_hardening.sql` creates `circlebites_access_token_hook`; `supabase/config.toml` enables it locally as a Custom Access Token Hook. It rejects password token issuance before a password session exists and is executable only by `supabase_auth_admin`.
 
-Supabase classifies verification of a provider recovery link as an OTP session. Therefore the access-token hook cannot distinguish that provider event from the supported email OTP. CircleBites removes the recovery API, callback, navigation, settings UI, and client service methods and fails closed on the mobile recovery event. Runtime validation additionally proves that even if an email owner calls the provider recovery endpoint directly and sets a password, subsequent password sign-in is rejected.
+Supabase classifies verification of a provider recovery link as an OTP session. Therefore the access-token hook cannot distinguish that provider event from the supported email OTP. Witoh removes the recovery API, callback, navigation, settings UI, and client service methods and fails closed on the mobile recovery event. Runtime validation additionally proves that even if an email owner calls the provider recovery endpoint directly and sets a password, subsequent password sign-in is rejected.
 
 Hosted deployment must activate the SQL Custom Access Token Hook in Authentication → Hooks. The hook is available on Free/Pro according to Supabase's Auth Hook matrix; the more specialized Password Verification Attempt Hook is plan-dependent. References: <https://supabase.com/docs/guides/auth/auth-hooks> and <https://supabase.com/docs/guides/auth/auth-hooks/custom-access-token-hook>.
 

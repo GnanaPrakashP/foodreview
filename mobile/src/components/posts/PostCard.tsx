@@ -263,7 +263,7 @@ export function PostCardDiagnosticShell({
         <View style={[styles.recommendationHeader, styles.diagnosticRecommendationHeader]}>
           {headerStep >= 1 ? (
             <>
-              <View style={[styles.avatar, { backgroundColor: fallbackAvatarColor("circlebites") }]}>
+              <View style={[styles.avatar, { backgroundColor: fallbackAvatarColor("witoh") }]}>
                 {headerStep >= 2 ? <Text style={styles.avatarText}>CB</Text> : null}
               </View>
               <View style={styles.contentColumn}>
@@ -273,7 +273,7 @@ export function PostCardDiagnosticShell({
                       numberOfLines={headerStep >= 5 ? 2 : 1}
                       style={styles.diagnosticCombinedHeaderText}
                     >
-                      <Text style={styles.author}>CircleBites Tester</Text>
+                      <Text style={styles.author}>Witoh Tester</Text>
                       {headerStep >= 4 ? (
                         <>
                           <Text style={styles.headerDot}> • </Text>
@@ -287,7 +287,7 @@ export function PostCardDiagnosticShell({
                   ) : (
                     <>
                       <View style={styles.authorMetaRow}>
-                        <Text numberOfLines={1} style={styles.author}>CircleBites Tester</Text>
+                        <Text numberOfLines={1} style={styles.author}>Witoh Tester</Text>
                         {headerStep >= 4 ? (
                           <>
                             <Text style={styles.headerDot}>•</Text>
@@ -1367,7 +1367,7 @@ function PostCardComponent({
       Alert.alert("Could not share post", error instanceof Error ? error.message : "Please try again.");
       return;
     }
-    const title = `${post.restaurantName} on CircleBites`;
+    const title = `${post.restaurantName} on Witoh`;
     const dishNames = post.items.map((item) => item.name).filter(Boolean).slice(0, 2).join(", ");
     const fallbackMessage = dishNames
       ? `Check out ${dishNames} at ${post.restaurantName}`
@@ -1458,7 +1458,7 @@ function PostCardComponent({
     if (!reason) return;
     try {
       await reportMutation.mutateAsync({ targetId, targetType, reason });
-      Alert.alert("Report sent", "Thanks. CircleBites moderation will review it.");
+      Alert.alert("Report sent", "Thanks. Witoh moderation will review it.");
     } catch (error) {
       Alert.alert("Could not send report", error instanceof Error ? error.message : "Please try again.");
     }
@@ -2112,11 +2112,13 @@ const PostCardContent = memo(function PostCardContent({
           <Text numberOfLines={1} style={styles.dishName}>{item.name}</Text>
           {item.rating > 0 ? (
             <View style={styles.ratingPill}>
-              {svgPlaceholders ? (
-                <PostCardSvgPlaceholder color={themeColors.gold} size={8} />
-              ) : (
-                <Star size={8} color={themeColors.gold} fill={themeColors.gold} strokeWidth={0} />
-              )}
+              <View style={styles.ratingIcon}>
+                {svgPlaceholders ? (
+                  <PostCardSvgPlaceholder color={themeColors.gold} size={9} />
+                ) : (
+                  <Star size={9} color={themeColors.gold} fill={themeColors.gold} strokeWidth={0} />
+                )}
+              </View>
               <Text style={styles.ratingText}>{item.rating}</Text>
             </View>
           ) : null}
@@ -3017,18 +3019,24 @@ function createStyles(c: ThemeColors) {
       marginBottom: 10
     },
     tag: {
+      alignItems: "center",
       backgroundColor: c.orangeDim,
       borderColor: c.orangeBorder,
       borderRadius: radius.pill,
       borderWidth: 1,
+      justifyContent: "center",
+      minHeight: 22,
       paddingHorizontal: 7,
-      paddingVertical: 3
+      paddingVertical: 0
     },
     tagText: {
       ...fontStyles.extraBold,
       color: c.orange,
       fontSize: typography.eyebrow,
-      lineHeight: 11
+      includeFontPadding: false,
+      lineHeight: 14,
+      textAlign: "center",
+      textAlignVertical: "center"
     },
     dishes: {
       flexDirection: "row",
@@ -3063,14 +3071,24 @@ function createStyles(c: ThemeColors) {
       borderWidth: 1,
       flexDirection: "row",
       gap: 2,
+      justifyContent: "center",
+      minHeight: 20,
       paddingHorizontal: 5,
-      paddingVertical: 1
+      paddingVertical: 0
+    },
+    ratingIcon: {
+      alignItems: "center",
+      height: 14,
+      justifyContent: "center",
+      width: 9
     },
     ratingText: {
       ...fontStyles.bold,
       color: c.gold,
       fontSize: typography.eyebrow,
-      lineHeight: 11
+      includeFontPadding: false,
+      lineHeight: 14,
+      textAlignVertical: "center"
     },
   });
 }

@@ -200,7 +200,7 @@ export class ExternalSafetyMonitor {
   async request() {
     try {
       const response = await fetch(this.url, {
-        headers: { Authorization: `Bearer ${this.token}`, "X-CircleBites-Load-Run": this.runId },
+        headers: { Authorization: `Bearer ${this.token}`, "X-Witoh-Load-Run": this.runId },
         signal: AbortSignal.timeout(10000)
       });
       invariant(response.ok, "load_safety_telemetry_response_failed");
@@ -323,7 +323,7 @@ export function actorHeaders(actor, extra = {}) {
     // Mobile clients persist one UUID per app installation. Give every virtual
     // actor the same stable shape so normal limiter traffic is not accidentally
     // collapsed into the shared "missing install" bucket.
-    "X-FoodReview-Install-Id": deterministicUuid("circlebites-load-install", actor.username),
+    "X-Witoh-Install-Id": deterministicUuid("circlebites-load-install", actor.username),
     ...extra
   };
 }

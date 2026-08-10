@@ -41,7 +41,7 @@ export const memoryPurple = {
   900: "#3C185C"
 } as const;
 
-/** CircleBites dark surface ramp for the room wallpaper/background. */
+/** Witoh dark surface ramp for the room wallpaper/background. */
 export const memoryNight = {
   700: "#3A3027",
   750: "#2E2720",
@@ -67,7 +67,7 @@ export const neutral = {
   900: "#101213" // base background (~#121212, true neutral)
 } as const;
 
-/** CircleBites-on-dark text/icon tiers. */
+/** Witoh-on-dark text/icon tiers. */
 export const onDark = {
   high: "#F5EDD8", // primary text/icons
   medium: "#9A8C80", // secondary text/icons — lifted to clear WCAG AA (~5.2:1 on bg)

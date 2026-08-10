@@ -11,7 +11,7 @@ Release verification status: **BLOCKED**
 
 ## Executive result
 
-Phase 8 establishes a fail-closed, reproducible native release path for CircleBites without publishing an app or starting Phase 9. The repository now binds development, preview and production builds to separate application identities, custom schemes and EAS environments; rejects unsafe production configuration; produces and inspects Android APK/AAB releases; produces an unsigned generic-iPhone arm64 Release build; declares native permissions and privacy behavior consistently; supplies mandatory release CI, store/legal worksheets and physical-device smoke matrices; and preserves all earlier privacy, account-isolation and operational controls.
+Phase 8 establishes a fail-closed, reproducible native release path for Witoh without publishing an app or starting Phase 9. The repository now binds development, preview and production builds to separate application identities, custom schemes and EAS environments; rejects unsafe production configuration; produces and inspects Android APK/AAB releases; produces an unsigned generic-iPhone arm64 Release build; declares native permissions and privacy behavior consistently; supplies mandatory release CI, store/legal worksheets and physical-device smoke matrices; and preserves all earlier privacy, account-isolation and operational controls.
 
 The implementation can pass locally because everything possible without external credentials or devices succeeds. It is not approved for production release. Production Google/Apple signing, Play/App Store ownership, real protected EAS variables, APNs/OAuth/provider credentials, hosted staging, physical-device install/upgrade and two-account behavior, real push delivery, live Sentry symbolication, legal approval, store-console declarations/review and Phase 9 capacity evidence remain blocked. Local artifacts must not be submitted.
 
@@ -41,10 +41,10 @@ The canonical store identity is:
 
 | Field | Production value |
 | --- | --- |
-| Product/display name | CircleBites |
+| Product/display name | Witoh |
 | Android application ID | `com.circlebites.mobile` |
 | iOS bundle identifier | `com.circlebites.mobile` |
-| Custom scheme | `circlebites` |
+| Custom scheme | `witoh` |
 | Web origin | `https://www.circlebites.in` |
 | API origin | `https://api.circlebites.in` |
 | Privacy | `https://www.circlebites.in/privacy` |
@@ -54,7 +54,7 @@ The canonical store identity is:
 | Privacy contact | `privacy@circlebites.in` |
 | Support contact | `hello@circlebites.in` |
 
-`FoodReview` remains only the repository/hardening-program name. It is not emitted as store identity. `FoodCircle`, old legal contacts and the unresolved `.app` domain were removed from active store/legal surfaces. Local/development and preview use `.dev`/`.preview` package suffixes and `circlebites-dev`/`circlebites-preview` schemes so they cannot be mistaken for production. Because Android is checked in rather than prebuilt by EAS, Gradle and manifest placeholders independently bind its application ID, label and callback scheme to the selected environment.
+Witoh is emitted as the store and in-app identity. The repository directory and store bundle IDs retain their legacy internal names so existing installs remain upgradeable. `FoodCircle`, old legal contacts and the unresolved `.app` domain were removed from active store/legal surfaces. Local/development and preview use `.dev`/`.preview` package suffixes and `witoh-dev`/`witoh-preview` schemes so they cannot be mistaken for production. Because Android is checked in rather than prebuilt by EAS, Gradle and manifest placeholders independently bind its application ID, label and callback scheme to the selected environment.
 
 ## Environment architecture and PH-001
 
@@ -86,15 +86,15 @@ The final release APK merged manifest—not just source XML—was inspected. It 
 
 App feature permissions are Internet, optional foreground coarse/fine location, camera, microphone, Android 13+ notifications, selected/recent photo access and vibration. Library-required network state, wake, audio playback foreground service/boot, Firebase delivery, Wi-Fi/install referrer and OEM badge permissions are visible in the merged artifact and are documented rather than hidden. Permissions blocked or absent are overlay, read/write legacy external storage, biometric/fingerprint, background/always location and broad video-library access. The app has no `requireAuthentication` SecureStore use that would justify biometrics.
 
-Only `MainActivity` is unpermissioned and exported; it owns launcher and `circlebites://` filters and is `singleTask`. The Firebase instance receiver is protected by the Google C2DM send permission; the profile installer receiver is protected by `android.permission.DUMP`. Dependency-only CanHub base crop activity, Compose preview activity and unused Expo image clipboard provider are removed. Every other active component is non-exported.
+Only `MainActivity` is unpermissioned and exported; it owns launcher and `witoh://` filters and is `singleTask`. The Firebase instance receiver is protected by the Google C2DM send permission; the profile installer receiver is protected by `android.permission.DUMP`. Dependency-only CanHub base crop activity, Compose preview activity and unused Expo image clipboard provider are removed. Every other active component is non-exported.
 
 Backup is disabled at application level. Defence-in-depth XML exclusions also cover SecureStore, account MMKV, account SQLite, private media caches, cleanup journals, persistent Query state and owner-scoped drafts. Debug network behavior remains outside production.
 
 ## Android build, signing and artifacts
 
-Gradle release no longer falls back to `signingConfigs.debug`. A release task requires a complete `CIRCLEBITES_RELEASE_*` set or EAS-injected Android signing values and fails otherwise. R8 minification, resource shrinking and native symbol generation are enabled; dev-client network inspection is disabled.
+Gradle release no longer falls back to `signingConfigs.debug`. A release task requires a complete `WITOH_RELEASE_*` set or EAS-injected Android signing values and fails otherwise. R8 minification, resource shrinking and native symbol generation are enabled; dev-client network inspection is disabled.
 
-Local validation used a disposable non-production RSA key stored only under `/private/tmp`, with certificate subject `CircleBites Phase 8 Local Validation / Non Production / Local Only`. This proves the signing configuration is not debug signing but is not the production upload key. APK Signature Scheme v2 and v3 verification succeeds. The AAB contains a signature and `jarsigner` verifies its entries, while strict trust validation correctly rejects the disposable self-signed certificate and missing timestamp. Google Play App Signing/upload-key trust remains external.
+Local validation used a disposable non-production RSA key stored only under `/private/tmp`, with the pre-rebrand certificate subject recorded in the original evidence. This proves the signing configuration is not debug signing but is not the production upload key. APK Signature Scheme v2 and v3 verification succeeds. The AAB contains a signature and `jarsigner` verifies its entries, while strict trust validation correctly rejects the disposable self-signed certificate and missing timestamp. Google Play App Signing/upload-key trust remains external.
 
 Final local artifacts:
 
@@ -177,7 +177,7 @@ Gradle release dependencies are captured in build metadata/dependency output; th
 
 ## Privacy, legal and store declarations
 
-Mobile and web privacy/terms now describe the same CircleBites behavior and link to canonical support/deletion surfaces. The inventory covers email/auth; profile/name; posts/dishes/restaurants/photo/video; optional foreground location; private Memories/participants/messages/media/voice; Circle/block/report/moderation data; push token/install ID; owner drafts/pending uploads; privacy-filtered crash/performance diagnostics; operational jobs; processors; offline cache; deletion/retention limits; child minimum age; and copyright/safety contact.
+Mobile and web privacy/terms now describe the same Witoh behavior and link to canonical support/deletion surfaces. The inventory covers email/auth; profile/name; posts/dishes/restaurants/photo/video; optional foreground location; private Memories/participants/messages/media/voice; Circle/block/report/moderation data; push token/install ID; owner drafts/pending uploads; privacy-filtered crash/performance diagnostics; operational jobs; processors; offline cache; deletion/retention limits; child minimum age; and copyright/safety contact.
 
 The documents are implementation-consistent worksheets, not legal conclusions. External counsel/release owner must approve controller/company identity, jurisdiction, exact retention, processor agreements/regions, child handling, copyright/takedown process, Play Data safety, App Privacy labels, age rating, export compliance and moderation/reviewer notes. Store reviewers must use disposable staging accounts with synthetic data. No legal approval, console submission or store approval is claimed.
 

@@ -47,7 +47,7 @@ enabled = false
 [auth]
 enabled = true
 site_url = "http://127.0.0.1:3000"
-additional_redirect_urls = ["http://127.0.0.1:3000", "circlebites-dev://auth/callback**", "circlebites-preview://auth/callback**", "circlebites://auth/callback**"]
+additional_redirect_urls = ["http://127.0.0.1:3000", "witoh-dev://auth/callback**", "witoh-preview://auth/callback**", "witoh://auth/callback**"]
 jwt_expiry = 3600
 enable_signup = true
 enable_anonymous_sign_ins = false
@@ -60,7 +60,7 @@ otp_expiry = 600
 otp_length = 6
 
 [auth.email.template.magic_link]
-subject = "Your CircleBites verification code"
+subject = "Your Witoh verification code"
 content_path = "./supabase/templates/email-otp.html"
 
 [auth.hook.custom_access_token]

@@ -114,7 +114,7 @@ export function ProfileSettingsPanel({ onCloseEnd }: ProfileSettingsPanelProps =
   async function confirmLogout() {
     const confirmed = await confirmAction({
       title: "Log out?",
-      message: "You will need to sign in again to use CircleBites.",
+      message: "You will need to sign in again to use Witoh.",
       confirmLabel: "Log out",
       destructive: true
     });
@@ -249,7 +249,7 @@ export function ProfileSettingsPanel({ onCloseEnd }: ProfileSettingsPanelProps =
         <SettingsSection title="About & Legal">
           <SettingsRow
             Icon={Info}
-            label="About CircleBites"
+            label="About Witoh"
             onPress={() => router.push("/profile/settings/about")}
           />
           <View style={styles.separator} />

@@ -83,7 +83,7 @@ export function safeProtectedPathFromLinkParts(input: {
   const scheme = input.scheme?.toLowerCase() ?? "";
   const hostname = input.hostname ?? "";
   const path = input.path?.replace(/^--\//, "") ?? "";
-  if (scheme === (options.customScheme ?? "circlebites").toLowerCase()) {
+  if (scheme === (options.customScheme ?? "witoh").toLowerCase()) {
     return safeProtectedPath([hostname, path].filter(Boolean).join("/"));
   }
   if (scheme === "http" || scheme === "https") {

@@ -20,7 +20,7 @@ export default function PostShareButton({ review }: Props) {
   const isMe = visibility === "me";
 
   function getCopyText() {
-    return `Discover food reviews from people you trust and find the best bites near you. Join CircleBites: ${window.location.origin}`;
+    return `Discover food reviews from people you trust and find the best bites near you. Join Witoh: ${window.location.origin}`;
   }
 
   function getImageUrl(options?: { download?: boolean }) {

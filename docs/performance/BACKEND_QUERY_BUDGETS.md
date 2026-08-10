@@ -1,4 +1,4 @@
-# FoodReview mobile backend budgets
+# Witoh mobile backend budgets
 
 These are Phase 5 guardrails for the React Native/Expo product. The machine-readable authority is `config/backend-performance-budgets.json`; `npm run validate:backend-performance` rejects missing screens, duplicate cache owners, broad feed scanners, more than two screen-owned requests, more than six application-data statements, pages above 50 rows, and payload budgets above 256 KiB.
 

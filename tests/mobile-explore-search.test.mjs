@@ -156,7 +156,8 @@ test("Explore search prefers authorized media-pipeline images and falls back to 
 
 test("Explore v3 authorizes place-card media in the bounded discovery RPC", () => {
   assert.match(exploreDiscovery, /const CANONICAL_EXPLORE_DISCOVERY_RPC = "explore_discovery_canonical_v3"/);
-  assert.match(exploreDiscovery, /return await getExploreDiscoveryFromRpc\(input, CANONICAL_EXPLORE_DISCOVERY_RPC\)/);
+  assert.match(exploreDiscovery, /return await filterDiscoveryMedia\(\s*await getExploreDiscoveryFromRpc\(input, CANONICAL_EXPLORE_DISCOVERY_RPC\)\s*\)/);
+  assert.match(exploreDiscovery, /\.filter\(\(media\) => media\.media_type !== "video"\)/);
   assert.doesNotMatch(exploreDiscovery, /\.from\("media_derivatives"\)/);
   assert.match(backendPerformanceMigration, /left join public\.media_assets asset on asset\.id = photo\.media_asset_id/);
   assert.match(backendPerformanceMigration, /asset\.status = 'ready' and asset\.visibility = 'public' and coalesce\(asset\.moderation_status, 'approved'\) = 'approved'/);

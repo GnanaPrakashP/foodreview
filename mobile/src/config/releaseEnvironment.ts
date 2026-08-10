@@ -8,9 +8,9 @@ export function mobileReleaseEnvironment(): MobileReleaseEnvironment {
 }
 
 export function authSchemeForEnvironment(environment = mobileReleaseEnvironment()) {
-  if (environment === "preview") return "circlebites-preview";
-  if (environment === "development" || environment === "local") return "circlebites-dev";
-  return "circlebites";
+  if (environment === "preview") return "witoh-preview";
+  if (environment === "development" || environment === "local") return "witoh-dev";
+  return "witoh";
 }
 
 export function releaseChannelForEnvironment(environment = mobileReleaseEnvironment()) {

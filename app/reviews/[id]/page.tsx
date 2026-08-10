@@ -27,7 +27,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     .maybeSingle<Pick<Review, "reviewer_name" | "restaurant_name" | "body" | "visibility" | "deleted_at" | "hidden_at" | "reported_at" | "status">>();
 
   const genericMeta: Metadata = {
-    title: "CircleBites post",
+    title: "Witoh post",
     description: "This post may require access to view.",
   };
 
@@ -36,10 +36,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://circlebites.in";
-  const title = `${review.reviewer_name} tried ${review.restaurant_name} on CircleBites`;
+  const title = `${review.reviewer_name} tried ${review.restaurant_name} on Witoh`;
   const description = review.body
     ? review.body.slice(0, 160)
-    : "Check this food review on CircleBites";
+    : "Check this food review on Witoh";
   const imageUrl = `${siteUrl}/api/posts/${encodeURIComponent(id)}/share-image`;
 
   return {

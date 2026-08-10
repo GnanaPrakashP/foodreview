@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "program": "FoodReview Production Hardening",
+  "program": "Witoh Production Hardening",
   "updatedAt": "2026-07-14",
   "sourceCommit": "f9321a9ce43be75cc31eca0135ad3f3beb5dc718",
   "canonicalBranch": "production-hardening",
@@ -368,7 +368,7 @@
       "branch": "hardening/10-native-release",
       "affectedFiles": ["app/privacy/page.tsx", "app/terms/page.tsx", "mobile/app/profile/settings/privacy.tsx", "mobile/app/profile/settings/terms.tsx"],
       "dependencies": ["PH-101", "PH-102", "PH-103", "PH-405", "Independent legal review and store-console declaration review remain external"],
-      "acceptanceCriteria": ["FoodReview, CircleBites and domain identity are consistent", "Location, Memories, media, push, moderation and retention are disclosed", "Deletion statements match implementation", "Store privacy declarations match runtime data handling"]
+      "acceptanceCriteria": ["Witoh, Witoh and domain identity are consistent", "Location, Memories, media, push, moderation and retention are disclosed", "Deletion statements match implementation", "Store privacy declarations match runtime data handling"]
     },
     {
       "id": "PH-804",
